@@ -6,11 +6,13 @@ import threading
 from pathlib import Path
 from queue import Queue
 
+import scipy.io.wavfile
 import typer
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel
 from typing_extensions import Annotated
 
 from pocket_tts.data.audio import stream_audio_chunks
@@ -38,9 +40,12 @@ cli_app = typer.Typer(
 # The pocket-tts server implementation
 # ------------------------------------------------------
 
+VOICES_PATH = "./voices"
+
 # Global model instance
 tts_model = None
 global_model_state = None
+voice_states = {}
 
 web_app = FastAPI(
     title="Kyutai Pocket TTS API", description="Text-to-Speech generation API", version="1.0.0"
@@ -68,6 +73,19 @@ async def root():
 @web_app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@web_app.get("/voices")
+def list_voices():
+    """
+    Return list of available voice style names.
+    """
+    voices = set()
+    for file in os.listdir(VOICES_PATH):
+        if file.endswith(".wav"):
+            voices.add(file[:-4])
+
+    return {"voices": sorted(list(voices))}
 
 
 def write_to_queue(queue, text_to_generate, model_state):
@@ -109,6 +127,32 @@ def generate_data_with_state(text_to_generate: str, model_state: dict):
         yield data
 
     thread.join()
+
+
+class SynthesizeRequest(BaseModel):
+    input: str = ""
+    voice: str = ""
+
+
+@web_app.post("/synthesize")
+def synthesize(req: SynthesizeRequest):
+    """
+    Generate complete text in one go
+    """
+    if not req.input.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    if req.voice not in voice_states:
+        raise HTTPException(status_code=400, detail="Invalid voice specified")
+
+    # Use the appropriate model state
+    audio_tensor = tts_model.generate_audio(
+        voice_states[req.voice], req.input, frames_after_eos=2, copy_state=True
+    )
+    audio_np = audio_tensor.detach().cpu().numpy()
+    buffer = io.BytesIO()
+    scipy.io.wavfile.write(buffer, tts_model.config.mimi.sample_rate, audio_np)
+    return Response(content=buffer.getvalue(), media_type="audio/wav")
 
 
 @web_app.post("/tts")
@@ -188,6 +232,14 @@ def serve(
     # Pre-load the voice prompt
     global_model_state = tts_model.get_state_for_audio_prompt(voice)
     logger.info(f"The size of the model state is {size_of_dict(global_model_state) // 1e6} MB")
+
+    global voice_states
+    print("loading voices...")
+    for file in os.listdir(VOICES_PATH):
+        if file.endswith(".wav"):
+            voice = file[:-4]
+            voice_states[voice] = tts_model.get_state_for_audio_prompt(f"{VOICES_PATH}/{file}")
+    print(f"{len(voice_states)} voices preloaded.")
 
     uvicorn.run("pocket_tts.main:web_app", host=host, port=port, reload=reload)
 
