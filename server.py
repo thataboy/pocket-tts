@@ -7,34 +7,23 @@ from pathlib import Path
 import scipy.io.wavfile
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from pocket_tts import TTSModel
-from pocket_tts.utils.utils import size_of_dict
+
+# from pocket_tts.utils.utils import size_of_dict
 
 logger = logging.getLogger(__name__)
 
 VOICES_PATH = "./voices"
 
 # Global model instance
-tts_model = TTSModel.load_model()
+tts_model = TTSModel.load_model(temp=1.1)  # , lsd_decode_steps=2)
 voices = {}
 
 web_app = FastAPI(
     title="Kyutai Pocket TTS API", description="Text-to-Speech generation API", version="1.0.0"
-)
-web_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://pod1-10007.internal.kyutai.org",
-        "https://kyutai.org",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 
@@ -58,6 +47,7 @@ class SynthesizeRequest(BaseModel):
 
 
 @web_app.post("/synthesize")
+@web_app.post("/v1/audio/speech")
 def synthesize(req: SynthesizeRequest):
     """
     Generate complete text in one go
@@ -99,12 +89,14 @@ def process_voices():
         wav = path.with_suffix(".wav")
         if not sft.exists() or wav.exists() and getmtime(wav) > getmtime(sft):
             print(f"Extracting voice {voice}")
-            data = tts_model.get_state_for_audio_prompt(wav, truncate=True, export_path=sft)
+            tensor = tts_model.save_audio_prompt(wav, sft, truncate=True)
+            data = tts_model.get_state_for_audio_prompt(tensor)
         else:
             data = tts_model.get_state_for_audio_prompt(sft)
         voices[voice] = data
 
-    print(f"{len(voices)} voices loaded; {size_of_dict(voices) // 1e6} MB.")
+    # print(f"{len(voices)} voices loaded; {size_of_dict(voices) // 1e6} MB.")
+    print(f"{len(voices)} voices loaded")
 
 
 if __name__ == "__main__":
