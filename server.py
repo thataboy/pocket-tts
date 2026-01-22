@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 VOICES_PATH = "./voices"
 
 # Global model instance
-tts_model = TTSModel.load_model(temp=1.1)  # , lsd_decode_steps=2)
+tts_model = TTSModel.load_model(temp=0.9, lsd_decode_steps=1)
 voices = {}
 
 web_app = FastAPI(
@@ -58,6 +58,7 @@ def synthesize(req: SynthesizeRequest):
     if req.voice not in voices:
         raise HTTPException(status_code=400, detail="Invalid voice specified")
 
+    print(f"{req.voice}➡️{req.input}⬅️")
     t0 = time.perf_counter()
 
     # Use the appropriate model state
@@ -70,8 +71,8 @@ def synthesize(req: SynthesizeRequest):
     num_samples = audio_tensor.shape[-1]
     duration = num_samples / sample_rate
     elapsed = time.perf_counter() - t0
-    rtf = elapsed / duration if duration > 0 else 0
-    print(f"[{elapsed:.3f}s] len={len(req.input)} dur={duration:.2f}s rtf={rtf:.4f}")
+    spd = duration / elapsed
+    print(f"[{elapsed:.3f}s] len={len(req.input)} dur={duration:.2f}s  {spd:.3f}x")
 
     return Response(content=buffer.getvalue(), media_type="audio/wav")
 
