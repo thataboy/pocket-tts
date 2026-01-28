@@ -82,7 +82,7 @@ profile_output*
 *.model
 *.pt
 
-voices/
+/voices
 
 # Agents files, use a symlink to AGENTS.md instead. 
 CLAUDE.md

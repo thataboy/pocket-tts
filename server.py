@@ -1,18 +1,19 @@
 import io
 import logging
+import threading
 import time
 from os.path import getmtime
 from pathlib import Path
+from queue import Queue
 
 import scipy.io.wavfile
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from pocket_tts import TTSModel
-
-# from pocket_tts.utils.utils import size_of_dict
+from pocket_tts.data.audio import stream_audio_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def list_voices():
 @web_app.get("/voices/refresh")
 def refresh_voices():
     process_voices()
-    return {"ok": True}
+    return {"voices": sorted(list(voices.keys()))}
 
 
 class SynthesizeRequest(BaseModel):
@@ -56,21 +57,22 @@ def synthesize(req: SynthesizeRequest):
         raise HTTPException(status_code=400, detail="Text cannot be empty")
 
     if req.voice not in voices:
-        raise HTTPException(status_code=400, detail="Invalid voice specified")
+        req.voice = next(iter(voices.keys())) if len(voices) > 0 else ""
+        if not req.voice:
+            raise HTTPException(status_code=400, detail="No voice found")
 
     print(f"{req.voice}➡️{req.input}⬅️")
     t0 = time.perf_counter()
-
     # Use the appropriate model state
     audio_tensor = tts_model.generate_audio(
         voices[req.voice], req.input, frames_after_eos=2, copy_state=True
     )
+    elapsed = time.perf_counter() - t0
     buffer = io.BytesIO()
     sample_rate = tts_model.sample_rate
     scipy.io.wavfile.write(buffer, sample_rate, audio_tensor.numpy())
     num_samples = audio_tensor.shape[-1]
     duration = num_samples / sample_rate
-    elapsed = time.perf_counter() - t0
     spd = duration / elapsed
     print(f"[{elapsed:.3f}s] len={len(req.input)} dur={duration:.2f}s  {spd:.3f}x")
 
@@ -100,6 +102,102 @@ def process_voices():
     print(f"{len(voices)} voices loaded")
 
 
+def generate_data_stream(text_to_generate: str, model_state: dict):
+    queue = Queue()
+    t0 = time.perf_counter()
+
+    thread = threading.Thread(target=write_to_queue, args=(queue, text_to_generate, model_state))
+    thread.start()
+
+    i = 0
+    try:
+        while True:
+            data = queue.get()
+
+            if data is None:
+                break
+
+            i += 1
+            yield data
+
+    finally:
+        # This runs even if the client disconnects (GeneratorExit)
+        elapsed = time.perf_counter() - t0
+        print(f"Total time: {elapsed:.3f}s | Chunks: {i}")
+
+        # Clean up the thread
+        thread.join()
+
+
+def write_to_queue(queue, text_to_generate, model_state):
+    """Allows writing to the StreamingResponse as if it were a file."""
+
+    class FileLikeToQueue(io.IOBase):
+        def __init__(self, queue):
+            self.queue = queue
+
+        def write(self, data):
+            self.queue.put(data)
+
+        def flush(self):
+            pass
+
+        def close(self):
+            self.queue.put(None)
+
+    audio_chunks = tts_model.generate_audio_stream(
+        model_state=model_state, text_to_generate=text_to_generate
+    )
+    stream_audio_chunks(FileLikeToQueue(queue), audio_chunks, tts_model.config.mimi.sample_rate)
+
+
+@web_app.post("/stream")
+def stream(req: SynthesizeRequest):
+    return _stream(req.input, req.voice)
+
+
+@web_app.post("/tts")
+def text_to_speech(
+    text: str = Form(...),
+    voice_url: str | None = Form(None),
+    voice_wav: UploadFile | None = File(None),
+):
+    return _stream(text, voice_url)
+
+
+def _stream(text, voice):
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    if voice not in voices:
+        voice = next(iter(voices.keys())) if len(voices) > 0 else ""
+        if not voice:
+            raise HTTPException(status_code=400, detail="No voice found")
+
+    print(f"stream [{len(text)}]➡️{voice}➡️{text}⬅️")
+
+    return StreamingResponse(
+        generate_data_stream(text, voices[voice]),
+        media_type="audio/wav",
+        headers={
+            "Content-Disposition": "attachment; filename=generated_speech.wav",
+            "Transfer-Encoding": "chunked",
+        },
+    )
+
+
+@web_app.get("/")
+async def root():
+    """Serve the frontend."""
+    static_path = Path(__file__).parent / "pocket_tts" / "static" / "index.html"
+    return FileResponse(static_path)
+
+
 if __name__ == "__main__":
     process_voices()
+
+    if voices:
+        print("Warming up...")
+        tts_model.generate_audio(next(iter(voices.values())), "Hello, world.")
+
     uvicorn.run(web_app, host="0.0.0.0", port=9800, reload=False)
