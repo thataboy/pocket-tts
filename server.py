@@ -21,6 +21,8 @@ VOICES_PATH = "./voices"
 
 # Global model instance
 tts_model = TTSModel.load_model(temp=0.9, lsd_decode_steps=1)
+
+# hash of voice name -> safetensors Path
 voices = {}
 
 web_app = FastAPI(
@@ -63,15 +65,15 @@ def synthesize(req: SynthesizeRequest):
 
     print(f"{req.voice}➡️{req.input}⬅️")
     t0 = time.perf_counter()
-    # Use the appropriate model state
-    audio_tensor = tts_model.generate_audio(
-        voices[req.voice], req.input, frames_after_eos=2, copy_state=True
-    )
-    elapsed = time.perf_counter() - t0
+
+    model_state = tts_model._cached_get_state_for_audio_prompt(voices[req.voice])
+    audio = tts_model.generate_audio(model_state, req.input, frames_after_eos=2)
+
     buffer = io.BytesIO()
     sample_rate = tts_model.sample_rate
-    scipy.io.wavfile.write(buffer, sample_rate, audio_tensor.numpy())
-    num_samples = audio_tensor.shape[-1]
+    scipy.io.wavfile.write(buffer, sample_rate, audio.numpy())
+    elapsed = time.perf_counter() - t0
+    num_samples = audio.shape[-1]
     duration = num_samples / sample_rate
     spd = duration / elapsed
     print(f"[{elapsed:.3f}s] len={len(req.input)} dur={duration:.2f}s  {spd:.3f}x")
@@ -92,11 +94,8 @@ def process_voices():
         wav = path.with_suffix(".wav")
         if not sft.exists() or wav.exists() and getmtime(wav) > getmtime(sft):
             print(f"Extracting voice {voice}")
-            tensor = tts_model.save_audio_prompt(wav, sft, truncate=True)
-            data = tts_model.get_state_for_audio_prompt(tensor)
-        else:
-            data = tts_model.get_state_for_audio_prompt(sft)
-        voices[voice] = data
+            tts_model.save_audio_prompt(wav, sft, truncate=True)
+        voices[voice] = sft
 
     # print(f"{len(voices)} voices loaded; {size_of_dict(voices) // 1e6} MB.")
     print(f"{len(voices)} voices loaded")
@@ -176,8 +175,10 @@ def _stream(text, voice):
 
     print(f"stream [{len(text)}]➡️{voice}➡️{text}⬅️")
 
+    model_state = tts_model._cached_get_state_for_audio_prompt(voices[voice])
+
     return StreamingResponse(
-        generate_data_stream(text, voices[voice]),
+        generate_data_stream(text, model_state),
         media_type="audio/wav",
         headers={
             "Content-Disposition": "attachment; filename=generated_speech.wav",
@@ -198,6 +199,7 @@ if __name__ == "__main__":
 
     if voices:
         print("Warming up...")
-        tts_model.generate_audio(next(iter(voices.values())), "Hello, world.")
+        model_state = tts_model._cached_get_state_for_audio_prompt(next(iter(voices.values())))
+        tts_model.generate_audio(model_state, "Hello, world.")
 
     uvicorn.run(web_app, host="0.0.0.0", port=9800, reload=False)
