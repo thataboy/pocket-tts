@@ -83,6 +83,7 @@ profile_output*
 *.pt
 
 /voices
+italk.yaml
 
 # Agents files, use a symlink to AGENTS.md instead. 
 CLAUDE.md

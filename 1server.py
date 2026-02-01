@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 VOICES_PATH = "./voices"
 
+# Global model instance
+tts_model = TTSModel.load_model(temp=0.7, lsd_decode_steps=1)
+
 web_app = FastAPI(
     title="Kyutai Pocket TTS API", description="Text-to-Speech generation API", version="1.0.0"
 )
@@ -286,10 +289,6 @@ class SetVoiceReq(BaseModel):
     voice: str
 
 
-class SetFavCategoryReq(BaseModel):
-    category: str = ""
-
-
 class TagCreateReq(BaseModel):
     label: str
     text: str
@@ -354,16 +353,6 @@ def italk_set_voice(req: SetVoiceReq):
     with ITALK_LOCK:
         data = _italk_load()
         data["settings"]["last_voice"] = voice
-        _italk_save(data)
-    return {"ok": True}
-
-
-@web_app.post("/italk/settings/fav_category")
-def italk_set_fav_category(req: SetFavCategoryReq):
-    cat = (req.category or "").strip()
-    with ITALK_LOCK:
-        data = _italk_load()
-        data["settings"]["last_fav_category"] = cat
         _italk_save(data)
     return {"ok": True}
 
@@ -485,29 +474,9 @@ def italk_reorder_fav(req: ReorderFavReq):
 
 @web_app.post("/italk/session/append_line")
 def italk_append_line(req: AppendLineReq):
-    """
-    Append a line to the current (last_session) WIP log.
-
-    Client sends JSON: { text, voice }.
-    Returns: { id: "<line_id>" }
-    """
     text = (req.text or "").strip()
     if not text:
         return {"ok": True}
-
-    with ITALK_LOCK:
-        data = _italk_load()
-        lines = data.get("last_session", {}).get("lines", [])
-        # Deduplicate by normalized text; newest first.
-        norm = " ".join(text.split()).lower()
-        new_lines = [l for l in lines if " ".join((l.get("text") or "").split()).lower() != norm]
-
-        line_id = f"line_{uuid.uuid4().hex[:10]}"
-        new_lines.insert(0, {"id": line_id, "text": text, "ts": _italk_now_iso()})
-        data["last_session"]["lines"] = new_lines
-        _italk_save(data)
-
-    return {"id": line_id}
 
 
 @web_app.post("/italk/session/delete_line")
@@ -524,6 +493,7 @@ def italk_delete_session_line(req: DeleteSessionLineReq):
         if len(data["last_session"]["lines"]) != before:
             _italk_save(data)
     return {"ok": True}
+
 
 @web_app.post("/italk/history/delete_line")
 def italk_delete_history_line(req: DeleteHistoryLineReq):
@@ -575,7 +545,7 @@ def italk_clear_session():
 @web_app.post("/italk/session/save")
 def italk_save_session(req: SessionSaveReq):
     """
-    Save a *copy* of the current session into history, but keep last_session intact.
+    Save current session into history and clear last_session.
     Returns {"id": "<sess_id>"} so the client can auto-expand the saved session.
     """
     sess_id = ""
@@ -596,9 +566,10 @@ def italk_save_session(req: SessionSaveReq):
                     "id": sess_id,
                     "name": sess.get("name", ""),
                     "saved_at": _italk_now_iso(),
-                    "lines": list(sess.get("lines", [])),
+                    "lines": list(sess["lines"]),
                 },
             )
+            data["last_session"] = {"name": "", "started_at": _italk_now_iso(), "lines": []}
             _italk_save(data)
 
     return {"id": sess_id}
@@ -620,23 +591,19 @@ async def root():
     return FileResponse(static_path)
 
 
-web_app.mount("/", StaticFiles(directory="./static", html=True), name="static")
-
-@web_app.on_event("startup")
-def startup():
-    global voices, tts_model
-    tts_model = TTSModel.load_model(temp=0.7, lsd_decode_steps=1)
-    voices = {}
-    process_voices()
-    if voices:
-        print("Warming up...")
-        model_state = tts_model._cached_get_state_for_audio_prompt(next(iter(voices.values())))
-        tts_model.generate_audio(model_state, "Hello, world.")
-    else:
-        print("No voices found!")
-        exit(1)
+# hash of voice name -> safetensors Path
+voices = {}
+process_voices()
+if voices:
+    print("Warming up...")
+    model_state = tts_model._cached_get_state_for_audio_prompt(next(iter(voices.values())))
+    tts_model.generate_audio(model_state, "Hello, world.")
+else:
+    print("No voices found!")
+    exit(1)
 
 if __name__ == "__main__":
+    web_app.mount("/", StaticFiles(directory="./static", html=True), name="static")
     uvicorn.run(
         "server:web_app", host="0.0.0.0", port=9800, reload=True, reload_includes="server.py"
     )
