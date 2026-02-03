@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 import scipy.io.wavfile
 import uvicorn
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -100,42 +100,51 @@ def process_voices():
     print(f"{len(voices)} voices loaded")
 
 
-def generate_data_stream(text_to_generate: str, model_state: dict):
-    queue = Queue()
+async def generate_data_stream(text_to_generate: str, model_state: dict, request: Request | None = None):
+    queue: Queue[bytes | None] = Queue()
+    cancel = threading.Event()
     t0 = time.perf_counter()
 
-    thread = threading.Thread(target=write_to_queue, args=(queue, text_to_generate, model_state))
+    thread = threading.Thread(
+        target=write_to_queue,
+        args=(queue, text_to_generate, model_state, cancel),
+        daemon=True,
+    )
     thread.start()
 
     i = 0
     try:
         while True:
-            data = queue.get()
+            if request is not None and await request.is_disconnected():
+                cancel.set()
+                break
+
+            try:
+                data = queue.get(timeout=0.1)
+            except Exception:
+                continue
 
             if data is None:
                 break
 
             i += 1
             yield data
-
     finally:
-        # This runs even if the client disconnects (GeneratorExit)
+        cancel.set()
         elapsed = time.perf_counter() - t0
         print(f"Total time: {elapsed:.3f}s | Chunks: {i}")
-
-        # Clean up the thread
-        thread.join()
+        thread.join(timeout=0.2)
 
 
-def write_to_queue(queue, text_to_generate, model_state):
-    """Allows writing to the StreamingResponse as if it were a file."""
-
+def write_to_queue(queue: Queue, text_to_generate: str, model_state: dict, cancel: threading.Event):
     class FileLikeToQueue(io.IOBase):
-        def __init__(self, queue):
+        def __init__(self, queue: Queue, cancel: threading.Event):
             self.queue = queue
+            self.cancel = cancel
 
         def write(self, data):
-            self.queue.put(data)
+            if not self.cancel.is_set():
+                self.queue.put(data)
 
         def flush(self):
             pass
@@ -143,28 +152,43 @@ def write_to_queue(queue, text_to_generate, model_state):
         def close(self):
             self.queue.put(None)
 
-    audio_chunks = tts_model.generate_audio_stream(
-        model_state=model_state, text_to_generate=text_to_generate
-    )
-    stream_audio_chunks(FileLikeToQueue(queue), audio_chunks, tts_model.config.mimi.sample_rate)
+    def cancellable_chunks(chunks_iter):
+        for ch in chunks_iter:
+            if cancel.is_set():
+                break
+            yield ch
+
+    try:
+        audio_chunks = tts_model.generate_audio_stream(
+            model_state=model_state, text_to_generate=text_to_generate
+        )
+        stream_audio_chunks(
+            FileLikeToQueue(queue, cancel),
+            cancellable_chunks(audio_chunks),
+            tts_model.config.mimi.sample_rate,
+        )
+    except Exception as e:
+        logger.exception("stream generation failed: %s", e)
+        queue.put(None)
 
 
 @web_app.post("/stream")
-def stream(req: SynthesizeRequest):
-    return _stream(req.input, req.voice)
+def stream(req: SynthesizeRequest, request: Request):
+    return _stream(req.input, req.voice, request)
 
 
 @web_app.post("/tts")
 def text_to_speech(
+    request: Request,
     text: str = Form(...),
     voice: str | None = Form(None),
     voice_url: str | None = Form(None),
     voice_wav: UploadFile | None = File(None),
 ):
-    return _stream(text, voice or voice_url)
+    return _stream(text, voice or voice_url, request)
 
 
-def _stream(text, voice):
+def _stream(text, voice, request: Request | None = None):
     if not text.strip():
         raise HTTPException(status_code=401, detail="Text cannot be empty")
 
@@ -173,12 +197,12 @@ def _stream(text, voice):
         if not voice:
             raise HTTPException(status_code=402, detail="No voice found")
 
-    print(f"stream [{len(text)}]➡️{voice}➡️{text}⬅️")
+    print(f"stream [{len(text)}]➡️{voice}➡️{text if len(text) < 200 else text[:200]+'...'}⬅️")
 
     model_state = tts_model._cached_get_state_for_audio_prompt(voices[voice])
 
     return StreamingResponse(
-        generate_data_stream(text, model_state),
+        generate_data_stream(text, model_state, request),
         media_type="audio/wav",
         headers={
             "Content-Disposition": "attachment; filename=generated_speech.wav",
@@ -626,6 +650,7 @@ web_app.mount("/", StaticFiles(directory="./static", html=True), name="static")
 def startup():
     global voices, tts_model
     tts_model = TTSModel.load_model(temp=0.7, lsd_decode_steps=1)
+
     voices = {}
     process_voices()
     if voices:
@@ -638,5 +663,6 @@ def startup():
 
 if __name__ == "__main__":
     uvicorn.run(
-        "server:web_app", host="0.0.0.0", port=9800, reload=True, reload_includes="server.py"
+        "server:web_app", host="0.0.0.0", port=9800, reload=True, reload_includes="./server.py"
+        # "server:web_app", host="0.0.0.0", port=9800, reload=False,
     )
