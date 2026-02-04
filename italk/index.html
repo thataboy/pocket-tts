@@ -52,29 +52,42 @@
             Speak
           </span>
         </button>
-        <button id="btnSpeakFrom" class="pressable inline-flex items-center justify-center gap-1 bg-slate-500 border border-slate-600 rounded px-6 py-2 text-sm font-medium">
+        <button id="btnSpeakFrom" class="pressable inline-flex items-center justify-center gap-1 bg-slate-500 border border-slate-600 rounded px-2 md:px-4 lg:px-6 py-2 text-sm font-medium">
           <span class="inline-flex items-center gap-1">
-            from <svg width="24px" height="24px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 20v1H2v-2h1v1zM3 3h1V2H2v2h1zM2 8h1V6H2zm0 5h1v-3H2zm18-5h1V6h-1zm0 4h1v-2h-1zM2 17h1v-2H2zM8 3V2H6v1zm5 0V2h-3v1zM9 21v-1H7v1zm4 0v-1h-2v1zm4-18V2h-2v1zm2-1v1h1v1h1V2zm-.245 20l2.686-1.351L19.126 16H23l-9-6.538v11.103l2.382-3.264zm-2.217-6.61L15 17.499v-6.073L19.922 15h-2.41l2.59 5.203-.905.455z"/><path fill="none" d="M0 0h24v24H0z"/></svg>
+            <span class="hidden min-[480px]:inline">
+              from
+            </span>
+            <svg width="24px" height="24px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 20v1H2v-2h1v1zM3 3h1V2H2v2h1zM2 8h1V6H2zm0 5h1v-3H2zm18-5h1V6h-1zm0 4h1v-2h-1zM2 17h1v-2H2zM8 3V2H6v1zm5 0V2h-3v1zM9 21v-1H7v1zm4 0v-1h-2v1zm4-18V2h-2v1zm2-1v1h1v1h1V2zm-.245 20l2.686-1.351L19.126 16H23l-9-6.538v11.103l2.382-3.264zm-2.217-6.61L15 17.499v-6.073L19.922 15h-2.41l2.59 5.203-.905.455z"/><path fill="none" d="M0 0h24v24H0z"/></svg>
           </span>
         </button>
-        <button id="btnFav" class="pressable inline-flex items-center justify-center gap-1 bg-slate-800 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
+        <button id="btnFav" class="pressable inline-flex items-center justify-center gap-1 bg-slate-600/80 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17.3l-6.2 3.3 1.2-7-5-4.8 7-1 3-6.3 3 6.3 7 1-5 4.8 1.2 7z"/></svg>
-          Fav
+          <span class="hidden min-[480px]:inline">
+            Fav
+          </span>
         </button>
-        <button id="btnTag" class="pressable inline-flex items-center justify-center gap-1 bg-slate-800 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
+        <button id="btnTag" class="pressable inline-flex items-center justify-center gap-1 bg-slate-600/80 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10V4H14L4 14l6 6 10-10z"/><path d="M7 17l-1.5-1.5"/><path d="M16 8h.01"/></svg>
-          Tag
+          <span class="hidden min-[480px]:inline">
+            Tag
+          </span>
         </button>
-        <button id="btnClear" class="pressable inline-flex items-center justify-center gap-1 bg-slate-800 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
+        <button id="btnClear" class="pressable inline-flex items-center justify-center gap-1 bg-slate-600/80 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12.0004 9.5L17.0004 14.5M17.0004 9.5L12.0004 14.5M4.50823 13.9546L7.43966 17.7546C7.79218 18.2115 7.96843 18.44 8.18975 18.6047C8.38579 18.7505 8.6069 18.8592 8.84212 18.9253C9.10766 19 9.39623 19 9.97336 19H17.8004C18.9205 19 19.4806 19 19.9084 18.782C20.2847 18.5903 20.5907 18.2843 20.7824 17.908C21.0004 17.4802 21.0004 16.9201 21.0004 15.8V8.2C21.0004 7.0799 21.0004 6.51984 20.7824 6.09202C20.5907 5.71569 20.2847 5.40973 19.9084 5.21799C19.4806 5 18.9205 5 17.8004 5H9.97336C9.39623 5 9.10766 5 8.84212 5.07467C8.6069 5.14081 8.38579 5.2495 8.18975 5.39534C7.96843 5.55998 7.79218 5.78846 7.43966 6.24543L4.50823 10.0454C3.96863 10.7449 3.69883 11.0947 3.59505 11.4804C3.50347 11.8207 3.50347 12.1793 3.59505 12.5196C3.69883 12.9053 3.96863 13.2551 4.50823 13.9546Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Clear
+          <path d="M12.0004 9.5L17.0004 14.5M17.0004 9.5L12.0004 14.5M4.50823 13.9546L7.43966 17.7546C7.79218 18.2115 7.96843 18.44 8.18975 18.6047C8.38579 18.7505 8.6069 18.8592 8.84212 18.9253C9.10766 19 9.39623 19 9.97336 19H17.8004C18.9205 19 19.4806 19 19.9084 18.782C20.2847 18.5903 20.5907 18.2843 20.7824 17.908C21.0004 17.4802 21.0004 16.9201 21.0004 15.8V8.2C21.0004 7.0799 21.0004 6.51984 20.7824 6.09202C20.5907 5.71569 20.2847 5.40973 19.9084 5.21799C19.4806 5 18.9205 5 17.8004 5H9.97336C9.39623 5 9.10766 5 8.84212 5.07467C8.6069 5.14081 8.38579 5.2495 8.18975 5.39534C7.96843 5.55998 7.79218 5.78846 7.43966 6.24543L4.50823 10.0454C3.96863 10.7449 3.69883 11.0947 3.59505 11.4804C3.50347 11.8207 3.50347 12.1793 3.59505 12.5196C3.69883 12.9053 3.96863 13.2551 4.50823 13.9546Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="hidden min-[480px]:inline">
+            Clear
+          </span>
         </button>
-        <button id="btnCopy" class="pressable icon-btn bg-slate-800 border border-slate-600 rounded" title="Copy" aria-label="Copy">
+        <button id="btnCopy" class="pressable inline-flex items-center justify-center gap-1 bg-slate-600/80 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><rect x="2" y="2" width="13" height="13" rx="2"/></svg>
         </button>
-        <button id="btnPaste" class="pressable inline-flex items-center justify-center gap-1 bg-slate-800 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M13.7778 5H14.6667C15.5047 5 15.9237 5 16.1841 5.2636C16.4444 5.52721 16.4444 5.95147 16.4444 6.8V10M13.7778 5V5.8C13.7778 6.22426 13.7778 6.4364 13.6476 6.5682C13.5174 6.7 13.3079 6.7 12.8889 6.7H7.55556C7.13653 6.7 6.92702 6.7 6.79684 6.5682C6.66667 6.4364 6.66667 6.22426 6.66667 5.8V5M13.7778 5C13.7778 4.57574 13.7778 4.2636 13.6476 4.1318C13.5174 4 13.3079 4 12.8889 4H7.55556C7.13653 4 6.92702 4 6.79684 4.1318C6.66667 4.2636 6.66667 4.57574 6.66667 5M6.66667 5H5.77778C4.93973 5 4.5207 5 4.26035 5.2636C4 5.52721 4 5.95147 4 6.8V17.1959C4 18.0445 4 18.4687 4.26035 18.7323C4.5207 18.9959 4.93973 18.9959 5.77778 18.9959H9.77778M14 20H18C18.9428 20 19.4142 20 19.7071 19.7071C20 19.4142 20 18.9428 20 18V14C20 13.0572 20 12.5858 19.7071 12.2929C19.4142 12 18.9428 12 18 12H14C13.0572 12 12.5858 12 12.2929 12.2929C12 12.5858 12 13.0572 12 14V18C12 18.9428 12 19.4142 12.2929 19.7071C12.5858 20 13.0572 20 14 20Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"></path></svg> Paste
+        <button id="btnPaste" class="pressable inline-flex items-center justify-center gap-1 bg-slate-600/80 border border-slate-600 rounded px-2 py-2 text-sm font-medium">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M13.7778 5H14.6667C15.5047 5 15.9237 5 16.1841 5.2636C16.4444 5.52721 16.4444 5.95147 16.4444 6.8V10M13.7778 5V5.8C13.7778 6.22426 13.7778 6.4364 13.6476 6.5682C13.5174 6.7 13.3079 6.7 12.8889 6.7H7.55556C7.13653 6.7 6.92702 6.7 6.79684 6.5682C6.66667 6.4364 6.66667 6.22426 6.66667 5.8V5M13.7778 5C13.7778 4.57574 13.7778 4.2636 13.6476 4.1318C13.5174 4 13.3079 4 12.8889 4H7.55556C7.13653 4 6.92702 4 6.79684 4.1318C6.66667 4.2636 6.66667 4.57574 6.66667 5M6.66667 5H5.77778C4.93973 5 4.5207 5 4.26035 5.2636C4 5.52721 4 5.95147 4 6.8V17.1959C4 18.0445 4 18.4687 4.26035 18.7323C4.5207 18.9959 4.93973 18.9959 5.77778 18.9959H9.77778M14 20H18C18.9428 20 19.4142 20 19.7071 19.7071C20 19.4142 20 18.9428 20 18V14C20 13.0572 20 12.5858 19.7071 12.2929C19.4142 12 18.9428 12 18 12H14C13.0572 12 12.5858 12 12.2929 12.2929C12 12.5858 12 13.0572 12 14V18C12 18.9428 12 19.4142 12.2929 19.7071C12.5858 20 13.0572 20 14 20Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"></path></svg>
+          <span class="hidden min-[480px]:inline">
+            Paste
+          </span>
         </button>
       </div>
 
@@ -86,7 +99,7 @@
       <div class="bg-slate-800 border border-slate-700 rounded p-2">
         <div class="flex items-center justify-between pb-1">
           <div class="text-sm font-semibold">Session</div>
-          <button id="btnClearSession" class="pressable text-[11px] text-slate-200 bg-slate-700 border border-slate-600 px-2 py-1 rounded">Clear</button>
+          <button id="btnClearSession" class="pressable text-[12px] text-slate-200 bg-slate-600 border border-slate-600 px-6 py-1 rounded">Clear Session</button>
         </div>
         <div id="sessionLog" class="space-y-1"></div>
       </div>
@@ -112,7 +125,7 @@
     </div>
   </div>
 
-  <button id="floatingStop" class="hidden pressable fixed bottom-1/4 left-1/2 transform -translate-x-1/2  bg-slate-500/80  active:bg-slate-600 shadow-lg rounded-2xl w-20 h-20 text-5xl font-bold z-50" aria-label="Stop">
+  <button id="floatingStop" class="hidden pressable fixed bottom-1/4 left-1/2 transform -translate-x-1/2  bg-slate-400/80  active:bg-slate-500 shadow-lg rounded-2xl w-20 h-20 text-5xl font-bold z-50" aria-label="Stop">
     ⛔
   </button>
 
@@ -121,11 +134,11 @@
     <div class="absolute inset-x-2 top-16 mx-auto w-full max-w-[56rem] bg-slate-800 border border-slate-600 rounded p-3 shadow-xl">
       <div class="flex items-center justify-between pb-2">
         <div id="modalTitle" class="text-sm font-semibold"></div>
-        <button id="modalClose" class="pressable text-slate-200 bg-slate-700 border border-slate-600 px-2 py-1 rounded text-sm">Close</button>
+        <button id="modalClose" class="pressable text-slate-200 bg-slate-600 border border-slate-600 px-2 py-1 rounded text-sm">Close</button>
       </div>
       <div id="modalBody"></div>
       <div class="pt-3 flex justify-end gap-2">
-        <button id="modalCancel" class="pressable bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">Cancel</button>
+        <button id="modalCancel" class="pressable bg-slate-600 border border-slate-600 rounded px-3 py-2 text-sm">Cancel</button>
         <button id="modalOk" class="pressable bg-indigo-600 active:bg-indigo-700 rounded px-3 py-2 text-sm font-semibold">OK</button>
       </div>
     </div>
@@ -494,7 +507,7 @@
 
     state.tags.forEach(tag => {
       const btn = document.createElement("button");
-      btn.className = "pressable tag-max line-clamp-1 bg-slate-700 border border-slate-600 active:bg-slate-600 rounded px-2 py-1.5 text-sm";
+      btn.className = "pressable tag-max line-clamp-1 bg-slate-600 border border-slate-600 active:bg-slate-500 rounded px-2 py-1.5 text-sm";
       btn.textContent = tag.label;
       btn.title = tag.text;
       btn.addEventListener("click", () => speakText(tag.text, { source: "tag" }));
@@ -582,15 +595,16 @@
     return row;
   }
 
-  function iconButton({ title, svg, onClick, labelText = "", noBorder = false }) {
+  function iconButton({ title, svg, onClick, labelText = "", noBorder = false, alwaysShowLabel = false}) {
     const btn = document.createElement("button");
-    btn.className = "pressable inline-flex items-center justify-center gap-1 bg-slate-800 rounded h-9 px-2";
+    btn.className = "pressable inline-flex items-center justify-center gap-1 bg-slate-600/80 rounded py-1 text-xs";
     if (noBorder) {
-      btn.classList.add("border-transparent");
+      btn.classList.add("border-transparent", "w-5", "min-[480px]:w-7");
     } else {
-      btn.classList.add("border", "border-slate-600");
+      btn.classList.add("border", "border-slate-600", "min-[480px]:px-2");
+      if (!labelText) btn.classList.add("w-9");
     }
-    if (!labelText) btn.classList.add("w-9");
+    if (!alwaysShowLabel && window.innerWidth < 480) labelText = "";
     btn.title = title;
     btn.innerHTML = `${svg}${labelText ? `<span class="text-xs font-medium ml-1">${labelText}</span>` : ''}`;
     btn.addEventListener("click", (e) => { e.stopPropagation(); onClick?.(); });
@@ -600,7 +614,8 @@
   function speakButton({ onClick }) {
     const btn = document.createElement("button");
     btn.className = "pressable inline-flex items-center gap-1 bg-emerald-700 active:bg-emerald-800 text-white border border-emerald-900 rounded px-2 py-1 text-xs font-semibold";
-    btn.innerHTML = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a4 4 0 0 1 0 7"/></svg>Speak`;
+    btn.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a4 4 0 0 1 0 7"/></svg>
+    <span class="hidden min-[480px]:inline">Speak</span>`;
     btn.addEventListener("click", (e) => { e.stopPropagation(); onClick?.(); });
     return btn;
   }
@@ -657,18 +672,52 @@
     $("textInput").focus();
   }
 
-  async function addFavoriteFromText(textOverride) {
+async function addFavoriteFromText(textOverride) {
     const full = (textOverride ?? $("textInput").value).trim();
     if (!full) return toast("Type something first");
 
-    const categories = Object.keys(state.favorites.categories || {});
+    // --- DIRECT SAVE (EDIT MODE) ---
+    if (state.editingFavoriteId) {
+      const cat = state.editingFavoriteCategory || "Unsorted";
+      const id = state.editingFavoriteId;
 
+      try {
+        await jsonFetch(API.updateFav(id), "PUT", { category: cat, text: full });
+
+        const cats = state.favorites.categories;
+        const list = cats[cat] || [];
+        const idx = list.findIndex(f => f.id === id);
+
+        if (idx !== -1) {
+          // Replace in place
+          list.splice(idx, 1, { id, text: full });
+        } else {
+          // Fallback if category was somehow lost: remove from all, add to this one
+          Object.keys(cats).forEach(k => cats[k] = (cats[k] || []).filter(f => f.id !== id));
+          cats[cat] = list;
+          list.push({ id, text: full });
+        }
+
+        state.editingFavoriteId = null;
+        state.editingFavoriteCategory = null;
+        renderEditingHint();
+        renderFavorites();
+        toast("Favorite updated");
+        return;
+      } catch (e) {
+        console.error(e);
+        toast("Update failed");
+        return;
+      }
+    }
+
+    // --- MODAL PROMPT (NEW FAVORITE MODE) ---
+    const categories = Object.keys(state.favorites.categories || {});
     const node = document.createElement("div");
     node.className = "space-y-3";
 
     const sel = document.createElement("select");
     sel.className = "w-full bg-slate-900 border border-slate-600 rounded px-2 py-2 outline-none";
-
     categories.forEach(c => {
       const opt = document.createElement("option");
       opt.value = c;
@@ -676,10 +725,7 @@
       sel.appendChild(opt);
     });
 
-    // Default category selection
-    if (state.editingFavoriteCategory && categories.includes(state.editingFavoriteCategory)) {
-      sel.value = state.editingFavoriteCategory;
-    } else if (state.lastFavCategory && categories.includes(state.lastFavCategory)) {
+    if (state.lastFavCategory && categories.includes(state.lastFavCategory)) {
       sel.value = state.lastFavCategory;
     }
 
@@ -698,10 +744,8 @@
     node.appendChild(Object.assign(document.createElement("div"), { className: "text-sm text-slate-300", textContent: "Text" }));
     node.appendChild(txt);
 
-    const isEdit = !!state.editingFavoriteId;
-
     showModal({
-      title: isEdit ? "Update favorite" : "Add favorite",
+      title: "Add favorite",
       bodyNode: node,
       okText: "Save",
       onOk: async () => {
@@ -711,25 +755,10 @@
         const text = txt.value.trim();
         if (!text) return false;
 
-        if (state.editingFavoriteId) {
-          await jsonFetch(API.updateFav(state.editingFavoriteId), "PUT", { category: cat, text });
-          // local update
-          const cats = state.favorites.categories;
-          // remove old
-          Object.keys(cats).forEach(k => cats[k] = (cats[k] || []).filter(f => f.id !== state.editingFavoriteId));
-          cats[cat] = cats[cat] || [];
-          cats[cat].push({ id: state.editingFavoriteId, text });
-          state.editingFavoriteId = null;
-          state.editingFavoriteCategory = null;
-          renderEditingHint();
-          toast("Favorite updated");
-        } else {
-          const res = await jsonFetch(API.addFav, "POST", { category: cat, text });
-          state.favorites.categories[cat] = state.favorites.categories[cat] || [];
-          state.favorites.categories[cat].push({ id: res.id, text });
-          toast("Favorite saved");
-        }
-
+        const res = await jsonFetch(API.addFav, "POST", { category: cat, text });
+        state.favorites.categories[cat] = state.favorites.categories[cat] || [];
+        state.favorites.categories[cat].push({ id: res.id, text });
+        toast("Favorite saved");
         renderFavorites();
       }
     });
@@ -863,7 +892,7 @@
           onClick: () => deleteFavorite(fav.id)
         });
 
-        section.appendChild(makeLineRow({ text: fav.text, buttons: [btnSpeak, btnUp, btnDown, btnEdit, btnDel] }));
+        section.appendChild(makeLineRow({ text: fav.text, buttons: [btnUp, btnDown, btnSpeak, btnEdit, btnDel] }));
       });
 
       root.appendChild(section);
@@ -903,6 +932,7 @@
         title: "Open session",
         svg: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
         labelText: "Open",
+        alwaysShowLabel: true,
         onClick: async () => {
           const lines = sess.lines || [];
           // Import oldest to newest so they append in correct order locally
@@ -1164,13 +1194,24 @@
 
 
   $("btnClearSession").addEventListener("click", async () => {
-    await jsonFetch(API.clearSession, "POST", {});
-    state.last_session.lines = [];
-    state.last_session.name = "";
-    $("sessionName").value = "";
-    updateValidation();
-    renderSessionLog();
-    toast("Session cleared");
+    const d = document.createElement("div");
+    d.className = "text-sm text-slate-200";
+    d.innerHTML = `<div class="pb-2">Clear current session?</div>`;
+    showModal({
+      title: "Clear session",
+      bodyNode: d,
+      okText: "Clear",
+      cancelText: "Keep",
+      onOk: async () => {
+        await jsonFetch(API.clearSession, "POST", {});
+        state.last_session.lines = [];
+        state.last_session.name = "";
+        $("sessionName").value = "";
+        updateValidation();
+        renderSessionLog();
+        toast("Session cleared");
+      }
+    });
   });
 
     $("btnSaveSession").addEventListener("click", async () => {

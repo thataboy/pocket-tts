@@ -216,7 +216,7 @@ async def demo_page():
     return FileResponse(Path(__file__).parent / "static" / "demo.html")
 
 
-web_app.mount("/static", StaticFiles(directory="./static"), name="static")
+web_app.mount("/", StaticFiles(directory="./italk"), name="static")
 
 
 @web_app.on_event("startup")
