@@ -204,6 +204,7 @@ web_app.include_router(italk_router, prefix="/italk")
 
 
 @web_app.get("/")
+@web_app.get("/index.html")
 async def root():
     """Default: Serve iTalk index"""
     return FileResponse(Path(__file__).parent / "italk" / "index.html")

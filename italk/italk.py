@@ -22,7 +22,7 @@ def _italk_now_iso() -> str:
 def _italk_default_state() -> Dict[str, Any]:
     return {
         "meta": {"version": 1, "created_at": _italk_now_iso()},
-        "settings": {"last_voice": ""},
+        "settings": {"last_voice": "", "expanded_fav_categories": []},
         "tags": [
             {"id": "tag_yes", "label": "Yes", "text": "Yes", "created_at": _italk_now_iso()},
             {"id": "tag_no", "label": "No", "text": "No", "created_at": _italk_now_iso()},
@@ -127,6 +127,9 @@ class DeleteSessionLineReq(BaseModel):
 class DeleteHistoryLineReq(BaseModel):
     session_id: str
     line_id: str
+
+class SetExpandedCatsReq(BaseModel):
+    categories: list[str]
 
 # ---------- Endpoints ----------
 
@@ -346,5 +349,13 @@ def italk_delete_history(req: DeleteHistoryReq):
     with ITALK_LOCK:
         data = _italk_load()
         data["history"] = [h for h in data["history"] if h.get("id") != req.id]
+        _italk_save(data)
+    return {"ok": True}
+
+@router.post("/settings/expanded_categories")
+def italk_set_expanded_cats(req: SetExpandedCatsReq):
+    with ITALK_LOCK:
+        data = _italk_load()
+        data["settings"]["expanded_fav_categories"] = req.categories
         _italk_save(data)
     return {"ok": True}
