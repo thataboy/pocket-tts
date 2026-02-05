@@ -131,6 +131,9 @@ class DeleteHistoryLineReq(BaseModel):
 class SetExpandedCatsReq(BaseModel):
     categories: list[str]
 
+class ReorderTagsReq(BaseModel):
+    ids: list[str]
+
 # ---------- Endpoints ----------
 
 @router.get("/state")
@@ -359,3 +362,14 @@ def italk_set_expanded_cats(req: SetExpandedCatsReq):
         data["settings"]["expanded_fav_categories"] = req.categories
         _italk_save(data)
     return {"ok": True}
+
+@router.post("/tags/reorder")
+def italk_reorder_tags(req: ReorderTagsReq):
+    with ITALK_LOCK:
+        data = _italk_load()
+        tag_map = {t["id"]: t for t in data["tags"]}
+        # Reconstruct list in new order, keeping only valid IDs
+        data["tags"] = [tag_map[tid] for tid in req.ids if tid in tag_map]
+        _italk_save(data)
+    return {"ok": True}
+
