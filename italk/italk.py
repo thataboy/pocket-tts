@@ -104,7 +104,8 @@ class FavoriteUpdateReq(BaseModel):
     text: str
 
 class ReorderFavReq(BaseModel):
-    category: str
+    from_cat: str
+    to_cat: str
     from_index: int = Field(alias="from")
     to_index: int = Field(alias="to")
 
@@ -245,20 +246,28 @@ def italk_delete_fav(fav_id: str):
             _italk_save(data)
     return {"ok": True}
 
+
 @router.post("/favorites/reorder")
 def italk_reorder_fav(req: ReorderFavReq):
     with ITALK_LOCK:
         data = _italk_load()
-        items = data["favorites"]["categories"].get(req.category, [])
-        if not items: return {"ok": True}
-        if req.from_index < 0 or req.from_index >= len(items):
-            raise HTTPException(status_code=400, detail="from out of range")
-        if req.to_index < 0 or req.to_index >= len(items):
-            raise HTTPException(status_code=400, detail="to out of range")
-        it = items.pop(req.from_index)
-        items.insert(req.to_index, it)
+        cats = data["favorites"]["categories"]
+        if req.from_cat not in cats or req.to_cat not in cats:
+            raise HTTPException(status_code=400, detail="Category not found")
+
+        items_from = cats[req.from_cat]
+        if req.from_index < 0 or req.from_index >= len(items_from):
+            raise HTTPException(status_code=400, detail="From index out of range")
+
+        item = items_from.pop(req.from_index)
+        items_to = cats[req.to_cat]
+        # Clamp insertion to ensure it's within bounds
+        idx_to = max(0, min(req.to_index, len(items_to)))
+        items_to.insert(idx_to, item)
+
         _italk_save(data)
     return {"ok": True}
+
 
 @router.post("/session/append_line")
 def italk_append_line(req: AppendLineReq):

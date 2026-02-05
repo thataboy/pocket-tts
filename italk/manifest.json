@@ -3,13 +3,13 @@
   "name": "iTalk",
   "icons": [
     {
-      "src": "talk.png",
+      "src": "italk.png",
       "type": "image/png",
       "sizes": "300x300"
     }
   ],
-  "start_url": "/index.html",
-  "background_color": "#FFFFFF",
+  "start_url": "/",
   "display": "standalone",
-  "theme_color": "#000000"
+  "background_color": "#333333",
+  "theme_color": "#3a4e5e"
 }

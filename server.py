@@ -236,5 +236,6 @@ def startup():
 
 if __name__ == "__main__":
     uvicorn.run(
-        "server:web_app", host="0.0.0.0", port=9800, reload=True, reload_includes="./server.py"
+        "server:web_app", host="0.0.0.0", port=9800, reload=False, reload_excludes="*", reload_includes="./server.py",
+        # ssl_keyfile="./M1-key.pem", ssl_certfile="./M1.pem"
     )
