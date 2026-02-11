@@ -48,12 +48,12 @@ class SynthesizeRequest(BaseModel):
 def synthesize(req: SynthesizeRequest):
     """Generate complete text in one go"""
     if not req.input.strip():
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
+        raise HTTPException(status_code=406, detail="Text cannot be empty")
 
     if req.voice not in voices:
         req.voice = next(iter(voices.keys())) if len(voices) > 0 else ""
         if not req.voice:
-            raise HTTPException(status_code=400, detail="No voice found")
+            raise HTTPException(status_code=407, detail="No voice found")
 
     print(f"{req.voice}➡️{req.input}⬅️")
     t0 = time.perf_counter()
@@ -61,9 +61,10 @@ def synthesize(req: SynthesizeRequest):
     model_state = tts_model._cached_get_state_for_audio_prompt(voices[req.voice])
     audio = tts_model.generate_audio(model_state, req.input, frames_after_eos=2)
 
-    buffer = io.BytesIO()
     sample_rate = tts_model.sample_rate
-    scipy.io.wavfile.write(buffer, sample_rate, audio.numpy())
+    audio_i16 = (audio.numpy().clip(-1, 1) * 32767).astype("int16")
+    buffer = io.BytesIO()
+    scipy.io.wavfile.write(buffer, sample_rate, audio_i16)
     elapsed = time.perf_counter() - t0
     num_samples = audio.shape[-1]
     duration = num_samples / sample_rate
@@ -236,6 +237,6 @@ def startup():
 
 if __name__ == "__main__":
     uvicorn.run(
-        "server:web_app", host="0.0.0.0", port=9800, reload=False, reload_excludes="*", reload_includes="./server.py",
+        "server:web_app", host="0.0.0.0", port=9800, reload=False, reload_includes="./server.py",
         # ssl_keyfile="./M1-key.pem", ssl_certfile="./M1.pem"
     )
