@@ -140,15 +140,18 @@
 
   <div id="modal" class="hidden fixed inset-0 z-50">
     <div class="absolute inset-0 bg-black/60"></div>
-    <div class="absolute inset-x-2 top-16 mx-auto w-full max-w-[56rem] bg-slate-800 border border-slate-600 rounded p-3 shadow-xl">
+    <div class="absolute inset-x-2 top-1/4 mx-auto w-full max-w-[40rem] bg-slate-700/70 border border-slate-600 rounded p-3 shadow-xl">
       <div class="flex items-center justify-between pb-2">
-        <div id="modalTitle" class="text-sm font-semibold"></div>
-        <button id="modalClose" class="pressable text-slate-200 bg-slate-600 border border-slate-600 px-2 py-1 rounded text-sm">Close</button>
+        <div id="modalTitle"></div>
+        <button id="modalClose" class="pressable text-slate-200 bg-slate-600 border border-slate-600 px-2 py-1 rounded text-sm"><svg width="24px" height="24px" viewBox="0 0 24 24" fill="none">
+          <path d="M18 18L12 12M12 12L6 6M12 12L18 6M12 12L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
       <div id="modalBody"></div>
-      <div class="pt-3 flex justify-end gap-2">
-        <button id="modalCancel" class="pressable bg-slate-600 border border-slate-600 rounded px-3 py-2 text-sm">Cancel</button>
-        <button id="modalOk" class="pressable bg-indigo-600 active:bg-indigo-700 rounded px-3 py-2 text-sm font-semibold">OK</button>
+      <div class="pt-3 flex justify-end gap-4">
+        <button id="modalCancel" class="pressable bg-slate-600 border border-slate-600 rounded px-4 py-2 text-sm">Cancel</button>
+        <button id="modalOk" class="pressable bg-indigo-600 active:bg-indigo-700 rounded px-4 py-2 text-sm font-semibold">OK</button>
       </div>
     </div>
   </div>

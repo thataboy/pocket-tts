@@ -1,17 +1,21 @@
 import io
 import logging
+import os
+import scipy.io.wavfile
 import threading
 import time
+import uvicorn
+
 from os.path import getmtime
 from pathlib import Path
 from queue import Queue
 
-import scipy.io.wavfile
-import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from html import escape
 from pydantic import BaseModel
+from urllib.parse import quote
 
 from italk.italk import router as italk_router  # iTalk logic module
 from pocket_tts import TTSModel
@@ -20,6 +24,71 @@ from pocket_tts.data.audio import stream_audio_chunks
 logger = logging.getLogger(__name__)
 
 VOICES_PATH = "./voices"
+
+
+
+class StaticFilesEx(StaticFiles):
+    async def get_response(self, path: str, scope):
+        full_path, stat_result = self.lookup_path(path)
+
+        if stat_result and os.path.isdir(full_path):
+            # Serve index.html if exists
+            index_path = os.path.join(full_path, "index.html")
+            if os.path.exists(index_path):
+                return await super().get_response(
+                    os.path.join(path, "index.html"), scope
+                )
+
+            entries = os.listdir(full_path)
+
+            # Sort: directories first, then files
+            dirs = []
+            files = []
+
+            for name in entries:
+                abs_entry = os.path.join(full_path, name)
+                if os.path.isdir(abs_entry):
+                    dirs.append(name)
+                else:
+                    files.append(name)
+
+            dirs.sort()
+            files.sort()
+
+            items = []
+
+            # Parent link stays relative
+            if path not in ("", "/"):
+                items.append('<li><a href="../">.. (parent directory)</a></li>')
+
+            # Directories
+            for name in dirs:
+                href = quote(name) + "/"
+                items.append(f'<li><a href="{href}">{escape(name)}/</a></li>')
+
+            # Files
+            for name in files:
+                href = quote(name)
+                items.append(f'<li><a href="{href}">{escape(name)}</a></li>')
+
+            html = f"""
+            <html>
+                <head>
+                    <title>Index of /{escape(path)}</title>
+                    <style>li {{ margin: 1em 1em; }}</style>
+                </head>
+                <body>
+                    <h2>Index of /{escape(path)}</h2>
+                    <ul>
+                        {''.join(items)}
+                    </ul>
+                </body>
+            </html>
+            """
+
+            return HTMLResponse(content=html)
+
+        return await super().get_response(path, scope)
 
 web_app = FastAPI(
     title="Kyutai Pocket TTS API", description="Text-to-Speech generation API", version="1.0.0"
@@ -39,7 +108,7 @@ def refresh_voices():
 
 
 class SynthesizeRequest(BaseModel):
-    input: str = ""
+    text: str = ""
     voice: str = ""
 
 
@@ -47,7 +116,7 @@ class SynthesizeRequest(BaseModel):
 @web_app.post("/v1/audio/speech")
 def synthesize(req: SynthesizeRequest):
     """Generate complete text in one go"""
-    if not req.input.strip():
+    if not req.text.strip():
         raise HTTPException(status_code=406, detail="Text cannot be empty")
 
     if req.voice not in voices:
@@ -55,11 +124,11 @@ def synthesize(req: SynthesizeRequest):
         if not req.voice:
             raise HTTPException(status_code=407, detail="No voice found")
 
-    print(f"{req.voice}➡️{req.input}⬅️")
+    print(f"{req.voice}➡️{req.text}⬅️")
     t0 = time.perf_counter()
 
     model_state = tts_model._cached_get_state_for_audio_prompt(voices[req.voice])
-    audio = tts_model.generate_audio(model_state, req.input, frames_after_eos=2)
+    audio = tts_model.generate_audio(model_state, req.text, frames_after_eos=2)
 
     sample_rate = tts_model.sample_rate
     audio_i16 = (audio.numpy().clip(-1, 1) * 32767).astype("int16")
@@ -69,7 +138,7 @@ def synthesize(req: SynthesizeRequest):
     num_samples = audio.shape[-1]
     duration = num_samples / sample_rate
     spd = duration / elapsed
-    print(f"[{elapsed:.3f}s] len={len(req.input)} dur={duration:.2f}s  {spd:.3f}x")
+    print(f"[{elapsed:.3f}s] len={len(req.text)} dur={duration:.2f}s  {spd:.3f}x")
 
     return Response(content=buffer.getvalue(), media_type="audio/wav")
 
@@ -163,7 +232,7 @@ def write_to_queue(queue: Queue, text_to_generate: str, model_state: dict, cance
 
 @web_app.post("/stream")
 def stream(req: SynthesizeRequest, request: Request):
-    return _stream(req.input, req.voice, request)
+    return _stream(req.text, req.voice, request)
 
 
 @web_app.post("/tts")
@@ -172,7 +241,6 @@ def text_to_speech(
     text: str = Form(...),
     voice: str | None = Form(None),
     voice_url: str | None = Form(None),
-    voice_wav: UploadFile | None = File(None),
 ):
     return _stream(text, voice or voice_url, request)
 
@@ -217,8 +285,8 @@ async def demo_page():
     return FileResponse(Path(__file__).parent / "static" / "demo.html")
 
 
-web_app.mount("/", StaticFiles(directory="./italk"), name="static")
-
+web_app.mount("/books", StaticFilesEx(directory="/Volumes/T7/books", html=True), name="books")
+web_app.mount("/", StaticFilesEx(directory="./italk", html=True), name="italk")
 
 @web_app.on_event("startup")
 def startup():
@@ -238,5 +306,4 @@ def startup():
 if __name__ == "__main__":
     uvicorn.run(
         "server:web_app", host="0.0.0.0", port=9800, reload=False, reload_includes="./server.py",
-        # ssl_keyfile="./M1-key.pem", ssl_certfile="./M1.pem"
     )
