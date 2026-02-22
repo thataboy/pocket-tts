@@ -1,5 +1,6 @@
 import copy
 import logging
+import math
 import os
 import queue
 import statistics
@@ -9,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import safetensors
+import safetensors.torch
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -23,19 +25,19 @@ from pocket_tts.default_parameters import (
     DEFAULT_NOISE_CLAMP,
     DEFAULT_TEMPERATURE,
     DEFAULT_VARIANT,
+    MAX_TOKEN_PER_CHUNK,
 )
 from pocket_tts.models.flow_lm import FlowLMModel
 from pocket_tts.models.mimi import MimiModel
 from pocket_tts.modules import mimi_transformer
 from pocket_tts.modules.dummy_quantizer import DummyQuantizer
 from pocket_tts.modules.seanet import SEANetDecoder, SEANetEncoder
-from pocket_tts.modules.stateful_module import increment_steps, init_states
+from pocket_tts.modules.stateful_module import StatefulModule, increment_steps, init_states
 from pocket_tts.utils.config import Config, load_config
 from pocket_tts.utils.utils import (
     PREDEFINED_VOICES,
     display_execution_time,
     download_if_necessary,
-    load_predefined_voice,
     size_of_dict,
 )
 from pocket_tts.utils.weights_loading import get_flow_lm_state_dict, get_mimi_state_dict
@@ -54,6 +56,9 @@ VOICE_CLONING_UNSUPPORTED = (
 
 
 class TTSModel(nn.Module):
+    _TOKENS_PER_SECOND_ESTIMATE = 3.0
+    _GEN_SECONDS_PADDING = 2.0
+
     def __init__(
         self,
         flow_lm: FlowLMModel,
@@ -170,10 +175,19 @@ class TTSModel(nn.Module):
         size_in_mb = size_of_dict(tts_model.state_dict()) // 1e6
         logging.info(f"TTS Model loaded successfully. Its size is {size_in_mb} MB")
 
+        # TODO: move this in the __init__ and make self.mimi in __init__
+        for top_module in (tts_model.flow_lm, tts_model.mimi):
+            for module_name, module in top_module.named_modules():
+                if not isinstance(module, StatefulModule):
+                    continue
+                module._module_absolute_name = module_name
+
         return tts_model
 
+    @classmethod
     def load_model(
-        variant: str = DEFAULT_VARIANT,
+        cls,
+        config: str | Path = DEFAULT_VARIANT,
         temp: float | int = DEFAULT_TEMPERATURE,
         lsd_decode_steps: int = DEFAULT_LSD_DECODE_STEPS,
         noise_clamp: float | int | None = DEFAULT_NOISE_CLAMP,
@@ -186,8 +200,8 @@ class TTSModel(nn.Module):
         with the specified generation parameters and ready for inference.
 
         Args:
-            variant: Model variant identifier corresponding to a config file name
-                (e.g., '610b0b2c'). Must match a YAML file in the config directory.
+            config: a path to a custom YAML config file saved locally (e.g., C://pocket_tts/pocket_tts_config.yaml)
+                or a model variant identifier (e.g., '610b0b2c'; must match a YAML file in the config directory).
             temp: Sampling temperature for generation. Higher values produce more
                 diverse but potentially lower quality output.
             lsd_decode_steps: Number of steps for Lagrangian Self Distillation
@@ -205,8 +219,25 @@ class TTSModel(nn.Module):
             FileNotFoundError: If the specified config file or model weights
                 are not found.
             ValueError: If the configuration is invalid or incompatible.
+
+        Example:
+            ```python
+            from pocket_tts import TTSModel
+
+            # Load with default settings
+            model = TTSModel.load_model()
+
+            # Load with custom parameters
+            model = TTSModel.load_model(variant="b6369a24", temp=0.5, lsd_decode_steps=5, eos_threshold=-3.0)
+            ```
         """
-        config = load_config(Path(__file__).parents[1] / f"config/{variant}.yaml")
+        if str(config).endswith(".yaml"):
+            config_path = Path(config)
+            config = load_config(config_path)
+            logger.info(f"Loading model from config at {config_path}...")
+        else:
+            config = load_config(Path(__file__).parents[1] / f"config/{config}.yaml")
+
         tts_model = TTSModel._from_pydantic_config_with_weights(
             config, temp, lsd_decode_steps, noise_clamp, eos_threshold
         )
@@ -270,33 +301,6 @@ class TTSModel(nn.Module):
         conditioning = F.linear(latents, self.flow_lm.speaker_proj_weight)
         return conditioning
 
-    def _slice_kv_cache(self, model_state: dict, num_frames: int) -> None:
-        """Slice KV cache to only keep the first num_frames elements.
-
-        This optimizes memory usage when caching voice states by discarding
-        unused cache capacity beyond the actual audio prompt length.
-
-        Args:
-            model_state: The model state dict containing KV caches for all modules
-            num_frames: Number of frames to keep in the KV cache
-        """
-        original_size = 0
-        sliced_size = 0
-        for module_name, module_state in model_state.items():
-            if "cache" in module_state:
-                # KV cache has shape [2, batch_size, sequence_length, num_heads, dim_per_head]
-                cache = module_state["cache"]
-                original_size += cache.numel() * cache.element_size()
-                # Slice to keep only the first num_frames positions
-                module_state["cache"] = cache[:, :, :num_frames, :, :].clone()
-                sliced_size += module_state["cache"].numel() * module_state["cache"].element_size()
-
-        memory_saved_mb = (original_size - sliced_size) / (1024 * 1024)
-        logger.info(
-            f"Sliced KV cache from {original_size / (1024 * 1024):.1f} MB to {sliced_size / (1024 * 1024):.1f} MB "
-            f"(saved {memory_saved_mb:.1f} MB)"
-        )
-
     def _expand_kv_cache(self, model_state: dict, sequence_length: int) -> None:
         """Expand KV cache back to full sequence_length for generation.
 
@@ -330,12 +334,28 @@ class TTSModel(nn.Module):
                     expanded_cache[:, :, :current_length, :, :] = cache
                     module_state["cache"] = expanded_cache
 
+    def _flow_lm_current_end(self, model_state: dict) -> int:
+        for module_state in model_state.values():
+            offset = module_state.get("offset")
+            if offset is not None:
+                return int(offset.view(-1)[0].item())
+        raise ValueError(
+            "Could not find offset in model state, please open an issue "
+            "at https://github.com/kyutai-labs/pocket-tts/issues"
+        )
+
     @torch.no_grad
-    def _decode_audio_worker(self, latents_queue: queue.Queue, result_queue: queue.Queue):
+    def _decode_audio_worker(
+        self,
+        latents_queue: queue.Queue,
+        result_queue: queue.Queue,
+        mimi_sequence_length: int,
+        mimi_steps_per_latent: int,
+    ):
         """Worker thread function for decoding audio latents from queue with immediate streaming."""
         try:
             audio_chunks = []
-            mimi_state = init_states(self.mimi, batch_size=1, sequence_length=1000)
+            mimi_state = init_states(self.mimi, batch_size=1, sequence_length=mimi_sequence_length)
             while True:
                 latent = latents_queue.get()
                 if latent is None:
@@ -346,7 +366,7 @@ class TTSModel(nn.Module):
 
                 t = time.monotonic()
                 audio_frame = self.mimi.decode_from_latent(quantized, mimi_state)
-                increment_steps(self.mimi, mimi_state, increment=16)
+                increment_steps(self.mimi, mimi_state, increment=mimi_steps_per_latent)
                 audio_frame_duration = audio_frame.shape[2] / self.config.mimi.sample_rate
                 # We could log the timings here.
                 logger.debug(
@@ -372,6 +392,7 @@ class TTSModel(nn.Module):
         self,
         model_state: dict,
         text_to_generate: str,
+        max_tokens: int = MAX_TOKEN_PER_CHUNK,
         frames_after_eos: int | None = None,
         copy_state: bool = True,
     ) -> torch.Tensor:
@@ -407,6 +428,21 @@ class TTSModel(nn.Module):
         Raises:
             ValueError: If text_to_generate is empty or invalid.
             RuntimeError: If generation fails due to model errors.
+
+        Example:
+            ```python
+            from pocket_tts import TTSModel
+
+            model = TTSModel.load_model()
+
+            voice_state = model.get_state_for_audio_prompt("hf://kyutai/tts-voices/alba-mackenna/casual.wav")
+
+            # Generate audio
+            audio = model.generate_audio(voice_state, "Hello world!", frames_after_eos=2, copy_state=True)
+
+            print(f"Generated audio shape: {audio.shape}")
+            print(f"Audio duration: {audio.shape[-1] / model.sample_rate:.2f} seconds")
+            ```
         """
         audio_chunks = []
         for chunk in self.generate_audio_stream(
@@ -414,6 +450,7 @@ class TTSModel(nn.Module):
             text_to_generate=text_to_generate,
             frames_after_eos=frames_after_eos,
             copy_state=copy_state,
+            max_tokens=max_tokens,
         ):
             audio_chunks.append(chunk)
         return torch.cat(audio_chunks, dim=0)
@@ -423,6 +460,7 @@ class TTSModel(nn.Module):
         self,
         model_state: dict,
         text_to_generate: str,
+        max_tokens: int = MAX_TOKEN_PER_CHUNK,
         frames_after_eos: int | None = None,
         copy_state: bool = True,
     ):
@@ -457,6 +495,20 @@ class TTSModel(nn.Module):
             ValueError: If text_to_generate is empty or invalid.
             RuntimeError: If generation fails due to model errors or threading issues.
 
+        Example:
+            ```python
+            from pocket_tts import TTSModel
+
+            model = TTSModel.load_model()
+
+            voice_state = model.get_state_for_audio_prompt("hf://kyutai/tts-voices/alba-mackenna/casual.wav")
+            # Stream generation
+            for chunk in model.generate_audio_stream(voice_state, "Long text content..."):
+                # Process each chunk as it's generated
+                print(f"Generated chunk: {chunk.shape[0]} samples")
+                # Could save chunks to file or play in real-time
+            ```
+
         Note:
             This method uses multithreading to parallelize latent generation
             and audio decoding. Generation performance is logged including
@@ -467,15 +519,20 @@ class TTSModel(nn.Module):
         # by using teacher forcing, but it would be a bit slower.
         # TODO: add the teacher forcing method for long texts where we use the audio of one chunk
         # as conditioning for the next chunk.
-        chunks = split_into_best_sentences(self.flow_lm.conditioner.tokenizer, text_to_generate)
+        chunks = split_into_best_sentences(
+            self.flow_lm.conditioner.tokenizer, text_to_generate, max_tokens
+        )
 
         for chunk in chunks:
             text_to_generate, frames_after_eos_guess = prepare_text_prompt(chunk)
             frames_after_eos_guess += 2
+            effective_frames = (
+                frames_after_eos if frames_after_eos is not None else frames_after_eos_guess
+            )
             yield from self._generate_audio_stream_short_text(
                 model_state=model_state,
                 text_to_generate=chunk,
-                frames_after_eos=frames_after_eos_guess,
+                frames_after_eos=effective_frames,
                 copy_state=copy_state,
             )
 
@@ -486,8 +543,11 @@ class TTSModel(nn.Module):
         if copy_state:
             model_state = copy.deepcopy(model_state)
 
-        # Expand sliced KV caches back to full size for generation
-        self._expand_kv_cache(model_state, sequence_length=1000)
+        prepared = self.flow_lm.conditioner.prepare(text_to_generate)
+        token_count = prepared.tokens.shape[1]
+        max_gen_len = self._estimate_max_gen_len(token_count)
+        mimi_steps_per_latent = int(self.mimi.encoder_frame_rate / self.mimi.frame_rate)
+        mimi_sequence_length = max_gen_len * mimi_steps_per_latent
 
         # Set up multithreaded generation and decoding
         latents_queue = queue.Queue()
@@ -495,7 +555,9 @@ class TTSModel(nn.Module):
 
         # Start decoder worker thread
         decoder_thread = threading.Thread(
-            target=self._decode_audio_worker, args=(latents_queue, result_queue), daemon=True
+            target=self._decode_audio_worker,
+            args=(latents_queue, result_queue, mimi_sequence_length, mimi_steps_per_latent),
+            daemon=True,
         )
         logger.info("starting timer now!")
         t_generating = time.monotonic()
@@ -504,7 +566,8 @@ class TTSModel(nn.Module):
         # Generate latents and add them to queue (decoder processes them in parallel)
         self._generate(
             model_state=model_state,
-            text_to_generate=text_to_generate,
+            prepared=prepared,
+            max_gen_len=max_gen_len,
             frames_after_eos=frames_after_eos,
             latents_queue=latents_queue,
             result_queue=result_queue,
@@ -551,14 +614,16 @@ class TTSModel(nn.Module):
     def _generate(
         self,
         model_state: dict,
-        text_to_generate: str,
+        prepared: TokenizedText,
+        max_gen_len: int,
         frames_after_eos: int,
         latents_queue: queue.Queue,
         result_queue: queue.Queue,
     ):
-        gen_len_sec = len(text_to_generate.split()) * 1 + 2.0
-        max_gen_len = int(gen_len_sec * 12.5)
-        prepared = self.flow_lm.conditioner.prepare(text_to_generate)
+        token_count = prepared.tokens.shape[1]
+        current_end = self._flow_lm_current_end(model_state)
+        required_len = current_end + token_count + max_gen_len
+        self._expand_kv_cache(model_state, sequence_length=required_len)
 
         with display_execution_time("Prompting text"):
             self._run_flow_lm_and_increment_step(
@@ -655,6 +720,27 @@ class TTSModel(nn.Module):
             ValueError: If audio tensor is invalid or empty.
             RuntimeError: If audio processing or encoding fails.
 
+        Example:
+            ```python
+            from pocket_tts import TTSModel
+
+            model = TTSModel.load_model()
+            # From HuggingFace URL
+            voice_state = model.get_state_for_audio_prompt("hf://kyutai/tts-voices/alba-mackenna/casual.wav")
+
+            # From local file
+            voice_state = model.get_state_for_audio_prompt("./my_voice.wav")
+
+            # Reload state from a .safetensors file (much faster than extracting from an audio file)
+            voice_state = model.get_state_for_audio_prompt("./my_voices.safetensors")
+
+            # From HTTP URL
+            voice_state = model.get_state_for_audio_prompt(
+                "https://huggingface.co/kyutai/tts-voices/resolve"
+                "/main/expresso/ex01-ex02_default_001_channel1_168s.wav"
+            )
+            ```
+
         Note:
             - Audio is automatically resampled to the model's sample rate (24kHz)
             - The audio is encoded using the Mimi compression model and projected
@@ -667,84 +753,12 @@ class TTSModel(nn.Module):
         ):
             if isinstance(audio_conditioning, str):
                 audio_conditioning = download_if_necessary(audio_conditioning)
-            import safetensors.torch
 
-            prompt = safetensors.torch.load_file(audio_conditioning)["audio_prompt"]
+            return _import_model_state(audio_conditioning)
+
         elif isinstance(audio_conditioning, str) and audio_conditioning in PREDEFINED_VOICES:
             # We get the audio conditioning directly from the safetensors file.
-            prompt = load_predefined_voice(audio_conditioning)
-        else:
-            if not self.has_voice_cloning and isinstance(audio_conditioning, (str, Path)):
-                raise ValueError(VOICE_CLONING_UNSUPPORTED)
-
-            if isinstance(audio_conditioning, str):
-                audio_conditioning = download_if_necessary(audio_conditioning)
-
-            if isinstance(audio_conditioning, Path):
-                audio, conditioning_sample_rate = audio_read(audio_conditioning)
-
-                if truncate:
-                    max_samples = int(30 * conditioning_sample_rate)  # 30 seconds of audio
-                    if audio.shape[-1] > max_samples:
-                        audio = audio[..., :max_samples]
-                        logger.info(f"Audio truncated to first 30 seconds ({max_samples} samples)")
-
-                audio_conditioning = convert_audio(
-                    audio, conditioning_sample_rate, self.config.mimi.sample_rate, 1
-                )
-
-            with display_execution_time("Encoding audio prompt"):
-                prompt = self._encode_audio(audio_conditioning.unsqueeze(0).to(self.device))
-
-        model_state = init_states(self.flow_lm, batch_size=1, sequence_length=1000)
-
-        with display_execution_time("Prompting audio"):
-            self._run_flow_lm_and_increment_step(model_state=model_state, audio_conditioning=prompt)
-
-        # Optimize memory by slicing KV cache to only keep frames from the audio prompt
-        num_audio_frames = prompt.shape[1]
-        self._slice_kv_cache(model_state, num_audio_frames)
-
-        return model_state
-
-    @torch.no_grad
-    def save_audio_prompt(
-        self,
-        audio_conditioning: Path | str | torch.Tensor,
-        export_path: Path | str,
-        truncate: bool = False,
-    ) -> torch.Tensor:
-        """Save audio prompt to .safetensors file
-
-        This method processes an audio prompt and exports it to a .safetensors file,
-        which can be loaded by get_state_for_audio_prompt in subsequent uses
-        without converting the audio again.
-
-        It also takes an already converted audio tensor and exports it as a .safetensors file
-
-        Args:
-            audio_conditioning: Audio to export
-                - Path: Local file path to audio file
-                - str: URL to download audio file
-                - torch.Tensor: Pre-loaded audio tensor with shape [channels, samples]
-            export_path: Path to output file
-            truncate: Whether to truncate long audio prompts to 30 seconds.
-
-        Returns:
-            Audio tensor of converted audio
-
-        Raises:
-            FileNotFoundError: If audio file path doesn't exist.
-            ValueError: If audio tensor export path is invalid or empty.
-            RuntimeError: If audio processing or encoding fails.
-
-        Note:
-            - Send resulting audio tensor to get_state_for_audio_prompt
-              in order to get the model state for generation.
-        """
-        if not export_path or not isinstance(export_path, (str, Path)):
-            raise ValueError("export_path must be of type str or Path")
-        export_path = Path(export_path).with_suffix(".safetensors")
+            return _import_model_state(download_if_necessary(PREDEFINED_VOICES[audio_conditioning]))
 
         if not self.has_voice_cloning and isinstance(audio_conditioning, (str, Path)):
             raise ValueError(VOICE_CLONING_UNSUPPORTED)
@@ -765,13 +779,24 @@ class TTSModel(nn.Module):
                 audio, conditioning_sample_rate, self.config.mimi.sample_rate, 1
             )
 
-        with display_execution_time("Exporting audio prompt"):
+        with display_execution_time("Encoding audio prompt"):
             prompt = self._encode_audio(audio_conditioning.unsqueeze(0).to(self.device))
-            import safetensors.torch
 
-            safetensors.torch.save_file({"audio_prompt": prompt}, export_path)
+        model_state = init_states(self.flow_lm, batch_size=1, sequence_length=prompt.shape[1])
 
-        return audio_conditioning
+        with display_execution_time("Prompting audio"):
+            self._run_flow_lm_and_increment_step(model_state=model_state, audio_conditioning=prompt)
+
+        logger.info(
+            "Size of the model state for audio prompt: %d MB", size_of_dict(model_state) // 1e6
+        )
+
+        return model_state
+
+    def _estimate_max_gen_len(self, token_count: int) -> int:
+        gen_len_sec = token_count / self._TOKENS_PER_SECOND_ESTIMATE + self._GEN_SECONDS_PADDING
+        frame_rate = self.config.mimi.frame_rate
+        return math.ceil(gen_len_sec * frame_rate)
 
 
 def prepare_text_prompt(text: str) -> tuple[str, int]:
@@ -802,7 +827,7 @@ def prepare_text_prompt(text: str) -> tuple[str, int]:
     return text, frames_after_eos_guess
 
 
-def split_into_best_sentences(tokenizer, text_to_generate: str) -> list[str]:
+def split_into_best_sentences(tokenizer, text_to_generate: str, max_tokens: int) -> list[str]:
     text_to_generate, _ = prepare_text_prompt(text_to_generate)
     text_to_generate = text_to_generate.strip()
     tokens = tokenizer(text_to_generate)
@@ -830,7 +855,7 @@ def split_into_best_sentences(tokenizer, text_to_generate: str) -> list[str]:
         text = tokenizer.sp.decode(list_of_tokens[start:end])
         nb_tokens_and_sentences.append((end - start, text))
 
-    max_nb_tokens_in_a_chunk = 50
+    max_nb_tokens_in_a_chunk = max_tokens
     chunks = []
     current_chunk = ""
     current_nb_of_tokens_in_chunk = 0
@@ -852,3 +877,29 @@ def split_into_best_sentences(tokenizer, text_to_generate: str) -> list[str]:
         chunks.append(current_chunk.strip())
 
     return chunks
+
+
+def export_model_state(model_state: dict[str, dict[str, torch.Tensor]], dest: str | Path):
+    dict_to_store = {}
+    for module_name, module_state in model_state.items():
+        for key, tensor_value in module_state.items():
+            dict_to_store[f"{module_name}/{key}"] = tensor_value
+    safetensors.torch.save_file(dict_to_store, dest)
+
+
+def _import_model_state(source: str | Path) -> dict[str, dict[str, torch.Tensor]]:
+    result = {}
+    with safetensors.safe_open(source, framework="pt") as f:
+        for key in f.keys():
+            module_name, tensor_key = key.split("/")
+            result.setdefault(module_name, {})
+            if tensor_key == "current_end":
+                # we used the shape[0] as step index before for torch.compile() compatibility,
+                # but it's not needed anymore
+                tensor = f.get_tensor(key)
+                result[module_name]["offset"] = torch.full(
+                    (1,), fill_value=tensor.shape[0], dtype=torch.long, device=tensor.device
+                )
+            else:
+                result[module_name][tensor_key] = f.get_tensor(key)
+    return result

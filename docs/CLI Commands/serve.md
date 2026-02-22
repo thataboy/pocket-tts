@@ -1,4 +1,4 @@
-# Serve Command Documentation
+# Serve
 
 The `serve` command starts a FastAPI web server that provides both a web interface and HTTP API for text-to-speech generation.
 
@@ -18,6 +18,7 @@ This starts a server on `http://localhost:8000` with the default voice model.
 - `--host HOST`: Host to bind to (default: "localhost")
 - `--port PORT`: Port to bind to (default: 8000)
 - `--reload`: Enable auto-reload for development
+- `--config`: Path to a custom config .yaml
 
 ## Examples
 
@@ -41,8 +42,22 @@ pocket-tts serve --voice "hf://kyutai/tts-voices/jessica-jian/casual.wav"
 pocket-tts serve --voice "./my_voice.wav"
 ```
 
+### Custom Model Config
+
+If you'd like to override the paths from which the models are loaded, you can provide a custom YAML configuration.
+
+Copy pocket_tts/config/b6369a24.yaml and change weights_path:, weights_path_without_voice_cloning: and tokenizer_path: to the paths of the models you want to load.
+
+Then, use the --config option to point to your newly created config.
+
+```bash
+# Use a different config
+pocket-tts serve --config "C://pocket-tts/my_config.yaml"
+```
+
 ## Web Interface
 
 Once the server is running, navigate to `http://localhost:8000` to access the web interface.
 
 For more advanced usage, see the [Python API documentation](python-api.md) for direct integration with the TTS model.
+

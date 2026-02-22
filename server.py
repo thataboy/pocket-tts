@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from urllib.parse import quote
 
 from italk.italk import router as italk_router  # iTalk logic module
-from pocket_tts import TTSModel
+from pocket_tts import TTSModel, export_model_state
 from pocket_tts.data.audio import stream_audio_chunks
 
 logger = logging.getLogger(__name__)
@@ -156,7 +156,10 @@ def process_voices():
         wav = path.with_suffix(".wav")
         if not sft.exists() or wav.exists() and getmtime(wav) > getmtime(sft):
             print(f"Extracting voice {voice}")
-            tts_model.save_audio_prompt(wav, sft, truncate=True)
+            model_state = tts_model.get_state_for_audio_prompt(
+                audio_conditioning=wav, truncate=True
+            )
+            export_model_state(model_state, sft)
         voices[voice] = sft
     print(f"{len(voices)} voices loaded")
 
