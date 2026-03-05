@@ -268,13 +268,21 @@
     }, 5000);
   }
 
-  // Streaming WAV player
-  class StreamingWavPlayer {
-    constructor({ onComplete, onCancel }) {
-      this.audioContext = StreamingWavPlayer.sharedContext();
-      this.sampleRate = 0;
-      this.numChannels = 0;
-      this.headerParsed = false;
+  class StreamPlayer {
+    constructor({ onComplete, onCancel, sampleRate = null, numChannels = 1 }) {
+      this.audioContext = StreamPlayer.sharedContext();
+
+      // If sampleRate is provided, we assume raw PCM16 and skip header parsing
+      if (sampleRate) {
+        this.sampleRate = sampleRate;
+        this.numChannels = numChannels;
+        this.headerParsed = true;
+      } else {
+        this.sampleRate = 0;
+        this.numChannels = 0;
+        this.headerParsed = false;
+      }
+
       this.headerBuffer = new Uint8Array(44);
       this.headerBytesReceived = 0;
       this.minBufferSize = 16384;
@@ -289,17 +297,18 @@
     }
 
     static sharedContext() {
-      if (!StreamingWavPlayer._ctx) {
-        StreamingWavPlayer._ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "playback" });
+      if (!StreamPlayer._ctx) {
+        StreamPlayer._ctx = new AudioContext({latencyHint: "playback",});
       }
-      return StreamingWavPlayer._ctx;
+      return StreamPlayer._ctx;
     }
 
     parseWavHeader(header) {
       const view = new DataView(header.buffer);
-      const riff = String.fromCharCode(...header.slice(0,4));
-      const wave = String.fromCharCode(...header.slice(8,12));
+      const riff = String.fromCharCode(...header.slice(0, 4));
+      const wave = String.fromCharCode(...header.slice(8, 12));
       if (riff !== "RIFF" || wave !== "WAVE") throw new Error("Invalid WAV");
+
       this.numChannels = view.getUint16(22, true);
       this.sampleRate = view.getUint32(24, true);
       this.headerParsed = true;
@@ -315,18 +324,17 @@
     _maybeFinish() {
       if (this.stopped) return;
       if (!this.streamEnded) return;
-      // If the stream ended but we have a partial trailing frame (not enough bytes
-      // for even one sample across all channels), discard it so completion can fire.
+
       if (this.headerParsed && this.numChannels > 0) {
         const bytesPerFrame = this.numChannels * 2;
         if (this.pcmData.length > 0 && this.pcmData.length < bytesPerFrame) {
           this.pcmData = new Uint8Array(0);
         }
       }
+
       if (this.pendingSources > 0) return;
       if (this.pcmData.length > 0) return;
 
-      // give the audio graph a beat to settle
       if (this._finishTimer) clearTimeout(this._finishTimer);
       this._finishTimer = setTimeout(() => {
         if (this.stopped) return;
@@ -336,6 +344,7 @@
 
     async tryPlayBuffer() {
       if (this.stopped) return;
+      // Ensure we have parsed header OR were initialized with a sampleRate
       if (!this.headerParsed || this.pcmData.length < this.minBufferSize) return;
 
       const bytesPerFrame = this.numChannels * 2;
@@ -346,11 +355,23 @@
       const dataToPlay = this.pcmData.slice(0, bytesToPlay);
       this.pcmData = this.pcmData.slice(bytesToPlay);
 
-      const audioBuffer = this.audioContext.createBuffer(this.numChannels, framesToPlay, this.sampleRate);
-      const int16Data = new Int16Array(dataToPlay.buffer, dataToPlay.byteOffset, framesToPlay * this.numChannels);
+      const audioBuffer = this.audioContext.createBuffer(
+        this.numChannels,
+        framesToPlay,
+        this.sampleRate
+      );
+
+      const int16Data = new Int16Array(
+        dataToPlay.buffer,
+        dataToPlay.byteOffset,
+        framesToPlay * this.numChannels
+      );
+
       for (let ch = 0; ch < this.numChannels; ch++) {
         const chData = audioBuffer.getChannelData(ch);
-        for (let i = 0; i < framesToPlay; i++) chData[i] = int16Data[i * this.numChannels + ch] / 32768;
+        for (let i = 0; i < framesToPlay; i++) {
+          chData[i] = int16Data[i * this.numChannels + ch] / 32768;
+        }
       }
 
       const source = this.audioContext.createBufferSource();
@@ -369,23 +390,29 @@
       source.start(startTime);
       this.nextStartTime = startTime + audioBuffer.duration;
 
-      if (this.pcmData.length >= this.minBufferSize) setTimeout(() => this.tryPlayBuffer(), 10);
+      if (this.pcmData.length >= this.minBufferSize) {
+        setTimeout(() => this.tryPlayBuffer(), 10);
+      }
       this._maybeFinish();
     }
 
     addChunk(chunk) {
       if (this.stopped) return;
-      if (!this.headerParsed) {
+
+      if (this.headerParsed) {
+        this.appendPcmData(chunk);
+      } else {
         const need = 44 - this.headerBytesReceived;
         const toCopy = Math.min(need, chunk.length);
         this.headerBuffer.set(chunk.slice(0, toCopy), this.headerBytesReceived);
         this.headerBytesReceived += toCopy;
+
         if (this.headerBytesReceived >= 44) {
           this.parseWavHeader(this.headerBuffer);
-          if (chunk.length > toCopy) this.appendPcmData(chunk.slice(toCopy));
+          if (chunk.length > toCopy) {
+            this.appendPcmData(chunk.slice(toCopy));
+          }
         }
-      } else {
-        this.appendPcmData(chunk);
       }
       this.tryPlayBuffer();
     }
@@ -403,8 +430,10 @@
       if (this.stopped) return;
       this.stopped = true;
       if (this._finishTimer) clearTimeout(this._finishTimer);
-      try { this.audioContext.close(); } catch {}
-      StreamingWavPlayer._ctx = null;
+      try {
+        this.audioContext.close();
+      } catch {}
+      StreamPlayer._ctx = null;
       if (this.onCancel) this.onCancel();
     }
   }
@@ -1115,7 +1144,6 @@ async function addFavoriteFromText(textOverride) {
       if (!completed) toast("Stopped");
     };
 
-    state.player = new StreamingWavPlayer({ onComplete, onCancel });
 
     try {
       const formData = new FormData();
@@ -1128,6 +1156,17 @@ async function addFavoriteFromText(textOverride) {
         signal: state.abortController.signal
       });
       if (!res.ok) throw new Error(`TTS error ${res.status}`);
+
+      const ctype = (res.headers.get("content-type") || "").toLowerCase();
+      const isPCM = !ctype.includes("audio/wav");
+      let sampleRate = null;
+      // If not wav, assume raw PCM; try to determine sample rate
+      if (isPCM) {
+        const m = ctype.match(/rate\s*=\s*(\d+)/);
+        sampleRate = m ? parseInt(m[1], 10) : 24000;
+      }
+
+      state.player = new StreamPlayer({ onComplete, onCancel, sampleRate });
 
       const reader = res.body.getReader();
       while (true) {

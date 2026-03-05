@@ -21,12 +21,10 @@ from urllib.parse import quote
 
 from italk.italk import router as italk_router  # iTalk logic module
 from pocket_tts import TTSModel, export_model_state
-from pocket_tts.data.audio import stream_audio_chunks
 
 logger = logging.getLogger(__name__)
 
 VOICES_PATH = "./voices"
-
 
 
 class StaticFilesEx(StaticFiles):
@@ -35,11 +33,12 @@ class StaticFilesEx(StaticFiles):
 
         if stat_result and os.path.isdir(full_path):
             # Serve index.html if exists
-            index_path = os.path.join(full_path, "index.html")
-            if os.path.exists(index_path):
-                return await super().get_response(
-                    os.path.join(path, "index.html"), scope
-                )
+            for idx in ["index.html", "index.htm", "index.xhtml"]:
+                index_path = os.path.join(full_path, idx)
+                if os.path.exists(index_path):
+                    return await super().get_response(
+                        os.path.join(path, idx), scope
+                    )
 
             entries = os.listdir(full_path)
 
@@ -48,6 +47,8 @@ class StaticFilesEx(StaticFiles):
             files = []
 
             for name in entries:
+                if name.startswith("."):
+                    continue
                 abs_entry = os.path.join(full_path, name)
                 if os.path.isdir(abs_entry):
                     dirs.append(name)
@@ -60,7 +61,7 @@ class StaticFilesEx(StaticFiles):
             items = []
 
             # Parent link stays relative
-            if path not in ("", "/"):
+            if path not in ("", "/", "."):
                 items.append('<li><a href="../">.. (parent directory)</a></li>')
 
             # Directories
@@ -239,59 +240,44 @@ def text_to_speech(
     return _stream(text, voice or voice_url, request)
 
 
-async def generate_data_stream(
+async def generate_pcm_stream(
     text_to_generate: str, model_state: dict, request: Request | None = None
 ):
     queue: Queue[bytes | None] = Queue()
     cancel_event = threading.Event()
-    t0 = time.perf_counter()
 
-    # 1. Internal Producer Thread
     def producer():
-        # This class satisfies the context manager protocol required by stream_audio_chunks
-        class QueueWriter:
-            def write(self, data):
-                if not cancel_event.is_set():
-                    queue.put(data)
-            def close(self):
-                pass
-            def flush(self):
-                pass
-            def __enter__(self):
-                return self
-            def __exit__(self, *args):
-                pass
-
         try:
-            # The library uses 'with f:' which requires __enter__ and __exit__
-            stream_audio_chunks(
-                QueueWriter(),
-                tts_model.generate_audio_stream(
-                    model_state=model_state,
-                    text_to_generate=text_to_generate,
-                    frames_after_eos=2,
-                ),
-                tts_model.sample_rate,
+            # Iterate directly over the model's audio chunks
+            chunks_iter = tts_model.generate_audio_stream(
+                model_state=model_state,
+                text_to_generate=text_to_generate,
+                frames_after_eos=2,
             )
+
+            for chunk in chunks_iter:
+                if cancel_event.is_set():
+                    return
+
+                # Convert float32 tensor to raw PCM16 bytes
+                pcm_bytes = (chunk.numpy().clip(-1, 1) * 32767).astype("int16").tobytes()
+                queue.put(pcm_bytes)
+
         except Exception as e:
-            logger.exception("Stream generation failed: %s", e)
+            logger.exception("PCM generation failed: %s", e)
         finally:
-            queue.put(None)  # Ensure the consumer loop always terminates
+            queue.put(None)  # EOF marker
 
     thread = threading.Thread(target=producer, daemon=True)
     thread.start()
 
-    # 2. Async Consumer Loop
-    chunks_count = 0
     try:
         while True:
-            # Check for client disconnect
             if request is not None and await request.is_disconnected():
                 cancel_event.set()
                 break
 
             try:
-                # Use non-blocking get to keep the FastAPI event loop responsive
                 data = queue.get_nowait()
             except Empty:
                 await asyncio.sleep(0.01)
@@ -300,14 +286,10 @@ async def generate_data_stream(
             if data is None:
                 break
 
-            chunks_count += 1
             yield data
     finally:
         cancel_event.set()
-        elapsed = time.perf_counter() - t0
-        print(f"Stream finished | Time: {elapsed:.3f}s | Chunks: {chunks_count}")
         thread.join(timeout=0.2)
-
 
 def _stream(text: str, voice: str | None, request: Request | None = None):
     if not text.strip():
@@ -319,15 +301,11 @@ def _stream(text: str, voice: str | None, request: Request | None = None):
             raise HTTPException(status_code=404, detail="No voice found")
 
     model_state = tts_model._cached_get_state_for_audio_prompt(voices[voice])
-    print(f"\nstream {voice}➡️{text[:200]}{'...' if len(text)>200 else ''}⬅️")
+    print(f"\nStream {voice}➡️{text[:200]}{'...' if len(text)>200 else ''}⬅️")
 
     return StreamingResponse(
-        generate_data_stream(text, model_state, request),
-        media_type="audio/wav",
-        headers={
-            "Content-Disposition": "attachment; filename=speech.wav",
-            "Cache-Control": "no-cache",
-        },
+        generate_pcm_stream(text, model_state, request),
+        media_type=f"audio/pcm; rate={tts_model.sample_rate}",
     )
 
 # --- App Routing ---
@@ -355,7 +333,7 @@ web_app.mount("/", StaticFilesEx(directory="./italk", html=True), name="italk")
 @web_app.on_event("startup")
 def startup():
     global voices, tts_model
-    tts_model = TTSModel.load_model(temp=0.9, lsd_decode_steps=1)
+    tts_model = TTSModel.load_model(temp=0.7, lsd_decode_steps=1)
     voices = {}
     process_voices()
     if voices:
