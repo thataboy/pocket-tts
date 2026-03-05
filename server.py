@@ -1,14 +1,16 @@
+import asyncio
 import io
 import logging
 import os
 import scipy.io.wavfile
 import threading
 import time
+import torch
 import uvicorn
 
 from os.path import getmtime
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
@@ -114,8 +116,8 @@ class SynthesizeRequest(BaseModel):
 
 @web_app.post("/synthesize")
 @web_app.post("/v1/audio/speech")
-def synthesize(req: SynthesizeRequest):
-    """Generate complete text in one go"""
+async def synthesize(req: SynthesizeRequest, request: Request):
+    """Generate complete text in one go with graceful abort on disconnect."""
     if not req.text.strip():
         raise HTTPException(status_code=406, detail="Text cannot be empty")
 
@@ -128,20 +130,78 @@ def synthesize(req: SynthesizeRequest):
     t0 = time.perf_counter()
 
     model_state = tts_model._cached_get_state_for_audio_prompt(voices[req.voice])
-    audio = tts_model.generate_audio(model_state, req.text, frames_after_eos=2)
 
+    # 1. Setup thread-safe communication
+    queue = Queue()
+    cancel_event = threading.Event()
+
+    def producer():
+        """Worker thread to run the blocking TTS generation."""
+        try:
+            chunks_iter = tts_model.generate_audio_stream(
+                model_state=model_state,
+                text_to_generate=req.text,
+                frames_after_eos=2,
+            )
+            for chunk in chunks_iter:
+                if cancel_event.is_set():
+                    return
+                queue.put(chunk)
+        except Exception as e:
+            logger.exception("Synthesis failed in thread: %s", e)
+        finally:
+            queue.put(None)  # Signal EOF
+
+    # 2. Start generation in background
+    thread = threading.Thread(target=producer, daemon=True)
+    thread.start()
+
+    audio_tensors = []
+
+    # 3. Async collection loop
+    try:
+        while True:
+            # Check if user closed the connection/browser tab
+            if await request.is_disconnected():
+                print("Client disconnected. Aborting synthesis...")
+                cancel_event.set()
+                break
+
+            try:
+                # Use non-blocking get to keep the event loop responsive
+                chunk = queue.get_nowait()
+            except Empty:
+                # Yield control to the event loop for a moment
+                await asyncio.sleep(0.01)
+                continue
+
+            if chunk is None:  # Worker finished
+                break
+
+            audio_tensors.append(chunk)
+    finally:
+        # Ensure thread cleanup
+        cancel_event.set()
+        thread.join(timeout=0.2)
+
+    # 4. If we aborted, return a partial or empty response
+    if not audio_tensors:
+        return Response(status_code=204)
+
+    # 5. Build the final WAV response
+    audio = torch.cat(audio_tensors, dim=0)
     sample_rate = tts_model.sample_rate
     audio_i16 = (audio.numpy().clip(-1, 1) * 32767).astype("int16")
+
     buffer = io.BytesIO()
     scipy.io.wavfile.write(buffer, sample_rate, audio_i16)
+
     elapsed = time.perf_counter() - t0
-    num_samples = audio.shape[-1]
-    duration = num_samples / sample_rate
+    duration = audio.shape[-1] / sample_rate
     spd = duration / elapsed
     print(f"[{elapsed:.3f}s] len={len(req.text)} dur={duration:.2f}s  {spd:.3f}x")
 
     return Response(content=buffer.getvalue(), media_type="audio/wav")
-
 
 def process_voices():
     print("Loading voices...")
@@ -164,75 +224,6 @@ def process_voices():
     print(f"{len(voices)} voices loaded")
 
 
-async def generate_data_stream(
-    text_to_generate: str, model_state: dict, request: Request | None = None
-):
-    queue: Queue[bytes | None] = Queue()
-    cancel = threading.Event()
-    t0 = time.perf_counter()
-
-    thread = threading.Thread(
-        target=write_to_queue, args=(queue, text_to_generate, model_state, cancel), daemon=True
-    )
-    thread.start()
-
-    i = 0
-    try:
-        while True:
-            if request is not None and await request.is_disconnected():
-                cancel.set()
-                break
-            try:
-                data = queue.get(timeout=0.1)
-            except Exception:
-                continue
-            if data is None:
-                break
-            i += 1
-            yield data
-    finally:
-        cancel.set()
-        elapsed = time.perf_counter() - t0
-        print(f"Total time: {elapsed:.3f}s | Chunks: {i}")
-        thread.join(timeout=0.2)
-
-
-def write_to_queue(queue: Queue, text_to_generate: str, model_state: dict, cancel: threading.Event):
-    class FileLikeToQueue(io.IOBase):
-        def __init__(self, queue: Queue, cancel: threading.Event):
-            self.queue = queue
-            self.cancel = cancel
-
-        def write(self, data):
-            if not self.cancel.is_set():
-                self.queue.put(data)
-
-        def flush(self):
-            pass
-
-        def close(self):
-            self.queue.put(None)
-
-    def cancellable_chunks(chunks_iter):
-        for ch in chunks_iter:
-            if cancel.is_set():
-                break
-            yield ch
-
-    try:
-        audio_chunks = tts_model.generate_audio_stream(
-            model_state=model_state, text_to_generate=text_to_generate
-        )
-        stream_audio_chunks(
-            FileLikeToQueue(queue, cancel),
-            cancellable_chunks(audio_chunks),
-            tts_model.config.mimi.sample_rate,
-        )
-    except Exception as e:
-        logger.exception("stream generation failed: %s", e)
-        queue.put(None)
-
-
 @web_app.post("/stream")
 def stream(req: SynthesizeRequest, request: Request):
     return _stream(req.text, req.voice, request)
@@ -248,26 +239,96 @@ def text_to_speech(
     return _stream(text, voice or voice_url, request)
 
 
-def _stream(text, voice, request: Request | None = None):
-    if not text.strip():
-        raise HTTPException(status_code=401, detail="Text cannot be empty")
-    if voice not in voices:
-        voice = next(iter(voices.keys())) if len(voices) > 0 else ""
-        if not voice:
-            raise HTTPException(status_code=402, detail="No voice found")
+async def generate_data_stream(
+    text_to_generate: str, model_state: dict, request: Request | None = None
+):
+    queue: Queue[bytes | None] = Queue()
+    cancel_event = threading.Event()
+    t0 = time.perf_counter()
 
-    print(f"stream [{len(text)}]➡️{voice}➡️{text if len(text) < 200 else text[:200] + '...'}⬅️")
+    # 1. Internal Producer Thread
+    def producer():
+        # This class satisfies the context manager protocol required by stream_audio_chunks
+        class QueueWriter:
+            def write(self, data):
+                if not cancel_event.is_set():
+                    queue.put(data)
+            def close(self):
+                pass
+            def flush(self):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        try:
+            # The library uses 'with f:' which requires __enter__ and __exit__
+            stream_audio_chunks(
+                QueueWriter(),
+                tts_model.generate_audio_stream(
+                    model_state=model_state,
+                    text_to_generate=text_to_generate,
+                    frames_after_eos=2,
+                ),
+                tts_model.sample_rate,
+            )
+        except Exception as e:
+            logger.exception("Stream generation failed: %s", e)
+        finally:
+            queue.put(None)  # Ensure the consumer loop always terminates
+
+    thread = threading.Thread(target=producer, daemon=True)
+    thread.start()
+
+    # 2. Async Consumer Loop
+    chunks_count = 0
+    try:
+        while True:
+            # Check for client disconnect
+            if request is not None and await request.is_disconnected():
+                cancel_event.set()
+                break
+
+            try:
+                # Use non-blocking get to keep the FastAPI event loop responsive
+                data = queue.get_nowait()
+            except Empty:
+                await asyncio.sleep(0.01)
+                continue
+
+            if data is None:
+                break
+
+            chunks_count += 1
+            yield data
+    finally:
+        cancel_event.set()
+        elapsed = time.perf_counter() - t0
+        print(f"Stream finished | Time: {elapsed:.3f}s | Chunks: {chunks_count}")
+        thread.join(timeout=0.2)
+
+
+def _stream(text: str, voice: str | None, request: Request | None = None):
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    if voice not in voices:
+        voice = next(iter(voices.keys())) if voices else ""
+        if not voice:
+            raise HTTPException(status_code=404, detail="No voice found")
+
     model_state = tts_model._cached_get_state_for_audio_prompt(voices[voice])
+    print(f"\nstream {voice}➡️{text[:200]}{'...' if len(text)>200 else ''}⬅️")
 
     return StreamingResponse(
         generate_data_stream(text, model_state, request),
         media_type="audio/wav",
         headers={
-            "Content-Disposition": "attachment; filename=generated_speech.wav",
-            "Transfer-Encoding": "chunked",
+            "Content-Disposition": "attachment; filename=speech.wav",
+            "Cache-Control": "no-cache",
         },
     )
-
 
 # --- App Routing ---
 
